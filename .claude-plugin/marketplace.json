@@ -1,0 +1,11 @@
+{
+  "name": "trek-band",
+  "owner": { "name": "Relja Bojovic" },
+  "plugins": [
+    {
+      "name": "trek-band",
+      "source": "./plugins/trek-band",
+      "description": "A lilac band above the Claude Code prompt: live 5-hour and weekly usage, and Clawd acting out iconic Star Trek scenes."
+    }
+  ]
+}

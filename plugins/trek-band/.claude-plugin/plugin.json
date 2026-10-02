@@ -1,0 +1,11 @@
+{
+  "name": "trek-band",
+  "version": "0.4.0",
+  "description": "A lilac band above the Claude Code prompt: live 5-hour and weekly usage, and Clawd acting out iconic Star Trek scenes.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Relja Bojovic"
+  },
+  "repository": "https://github.com/rb17080/trek-band",
+  "license": "MIT"
+}

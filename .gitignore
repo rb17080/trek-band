@@ -1,0 +1,7 @@
+tools/scene-kit/out/
+tools/video/frames/
+tools/video/frames-test/
+tools/video/composition.build.ts
+tools/video/composition.html
+node_modules/
+*.tmp

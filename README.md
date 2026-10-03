@@ -2,72 +2,81 @@
 
 # trek-band
 
-**Star Trek, playing above your Claude Code prompt.**
+**Star Trek above your Claude Code prompt.**
 
-A [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview): a lilac band with your live 5-hour and weekly usage, a prompt-cache timer, and Clawd acting out thirteen iconic Star Trek scenes in hand-made pixel art.
-
-<img src="media/demo.webp" alt="trek-band: the usage band above the Claude Code prompt, then all thirteen scenes" width="880">
+<img src="media/demo.webp" alt="trek-band: usage meters and a pixel-art Star Trek scene above the Claude Code prompt" width="880">
 
 </div>
 
-## What you get
+A [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview) that puts a lilac band above the prompt: your usage on the left, Clawd acting out a Star Trek scene on the right.
 
-- **Usage at a glance.** Rings for the 5-hour and the weekly limit, plus any per-model weekly limit your plan has (Fable), the same live figures as the app's usage panel, each with how long until it resets: `4:39` (hours:minutes), `1:18:03` (days:hours:minutes). A ring turns amber when your pace so far would use it up before it resets, and red at 90%. Hover a ring for the exact figure and the reset time: `57.0% · Sun 7PM`.
-- **A prompt-cache timer** in the bar under the prompt, next to the model name: `Cache: 59:57`, ticking every second. The prompt cache lasts an hour from the last message, yours or Claude's. The timer counts down in green while the cache is warm; once it expires it turns red and counts up, so you know a cache miss is coming. It disappears in sessions idle for more than six hours.
-- **Thirteen scenes**, each a 17-second story that plays twice before the next one:
+## What's in it
+
+**Usage meters.** Four rings, two per row:
+
+- 5-hour session
+- weekly, all models
+- weekly per-model limits your plan has, such as Fable
+- context window
+
+Each ring shows the percentage and the time to reset, or the token count for context. Hover a ring for the exact figure and reset time. A ring turns amber when your current pace would use it up before it resets, and red at 90%.
+
+**Cache timer.** `Cache: 59:57` next to the model name. The prompt cache lasts an hour from the last message. The timer counts down in green, then turns red and counts up once the cache has expired. It hides after six hours idle.
+
+**23 scenes**, 10 seconds each, in shuffled order:
 
 | The Next Generation | | Voyager |
 | --- | --- | --- |
-| Darmok | The Inner Light | The Cloud |
-| All Good Things… | Déjà Q | Caretaker |
-| Chain of Command | Tapestry | Scorpion |
-| Q Who | The Best of Both Worlds | The Doctor |
-| *First Contact* (film) | | |
+| Darmok | Yesterday's Enterprise | Caretaker |
+| All Good Things… | The Measure of a Man | The Cloud |
+| Q Who | Cause and Effect | Scorpion |
+| Chain of Command | Relics | The Doctor |
+| The Inner Light | Ode to Spot | Blink of an Eye |
+| Déjà Q | *First Contact* (film) | Year of Hell |
+| Tapestry | | Threshold |
+| The Best of Both Worlds | | Timeless |
+| | | Endgame |
 
-- **Calm by design.** No white-outs, strobing or flicker. Every scene is measured frame by frame (every 0.05 s, whole frame and eight regions) before it ships; see [`tools/scene-kit/flashcheck.py`](tools/scene-kit/flashcheck.py).
+No flashes, no strobing, no white-outs. Every scene is checked frame by frame with [`flashcheck.py`](tools/scene-kit/flashcheck.py).
 
 ## Install
 
-Requires Claude Code **2.1.287 or later** (mods). In a Claude Code session:
+Needs Claude Code 2.1.286 or later.
 
 ```
 /plugin marketplace add rb17080/trek-band
 /plugin install trek-band@trek-band
 ```
 
-Or from your shell:
+The scenes draw in the Code tab of the Claude desktop app. A terminal shows the usage figures as text.
 
-```bash
-claude plugin marketplace add rb17080/trek-band
-claude plugin install trek-band@trek-band
-```
-
-The scenes draw in the **Code tab of the Claude desktop app**. In a terminal the band shows the usage figures as text.
-
-## Controls
+## Commands
 
 | | |
 | --- | --- |
-| `/trek` or ⏭ (left of the scene) | next scene |
-| `/trek pause` or ⏸ | stay on this scene |
-| `/trek play` or ▶ | rotate again |
+| `/startrek` | next scene |
+| `/startrek darmok`, `/startrek 7` | jump to a scene by name or number |
+| `/startrek list` | all scenes |
+| `/startrek fav <scene>` | add or remove a favourite; with favourites set, only those play |
+| `/startrek favs clear` | play everything again |
+| `/startrek pause`, `/startrek play` | hold the current scene, or resume |
 
 ## How it works
 
-trek-band is a mod: JavaScript hooks that run inside Claude Code. It draws the `AbovePrompt` band (the rings, the countdowns and the scene, an SVG animated with SMIL) and adds the cache timer to the `SessionMode` labels under the prompt.
+It's a mod: JavaScript hooks running inside Claude Code. It draws the `AbovePrompt` band and adds the cache timer to the footer.
 
-One detail shapes the design: the desktop app rebuilds every mod drawing whenever anything changes, and a rebuilt SVG starts its animation from zero. The cache timer ticks every second, so the band is rebuilt every second too, and each rebuild hands the scene over already advanced to where it was: every animation's start time is shifted back by the seconds the scene has been showing.
+The usage figures come from `api.anthropic.com/api/oauth/usage`, fetched every three minutes and shared across your open sessions. The request goes out with your Claude login, which the engine attaches itself, so the mod never sees your token. That's the only network request the mod makes, and it doesn't touch your files.
 
-Like any mod, it runs with your permissions. Read [`plugins/trek-band/hooks/register.tsx`](plugins/trek-band/hooks/register.tsx), or run `claude plugin validate plugins/trek-band` to list every event it hooks and every call it makes. It reads usage figures, keeps a timer, and draws. It makes one network request every three minutes, shared by all your open sessions: your plan usage, from `api.anthropic.com/api/oauth/usage`, with your Claude login. The engine attaches the login itself, so the mod never sees it. It touches no files.
+The desktop app redraws the whole band whenever anything changes, including every tick of the cache timer. Each redraw hands the scene over at the point it had reached, so the animation never restarts. The same redraw is why the band has no buttons: the app drops clicks on a redrawn band ([anthropics/claude-code#99211](https://github.com/anthropics/claude-code/issues/99211)).
+
+Run `claude plugin validate plugins/trek-band` to list every event the mod hooks and every call it makes.
 
 ## Make a scene
 
-[`tools/scene-kit`](tools/scene-kit) has the shared pixel-art helpers, every scene's source, a preview script that freezes a scene at each second, and the flash check. The preview tooling expects Windows with Microsoft Edge, Node 22+ and Python with Pillow.
-
-The README video is rendered from the same scene code: [`tools/video`](tools/video).
+[`tools/scene-kit`](tools/scene-kit) has the pixel-art helpers, every scene's source, a preview script and the flash check. You need Windows with Microsoft Edge, Node 22+ and Python with Pillow. The video above is rendered from the same code by [`tools/video`](tools/video).
 
 ## Credits
 
-Built with Claude Code. Star Trek and its episodes are trademarks of CBS Studios / Paramount; Clawd is Anthropic's mascot. This is an unofficial fan project, not affiliated with or endorsed by either. All artwork is original pixel art.
+Star Trek is a trademark of CBS Studios / Paramount, and Clawd is Anthropic's mascot. This is an unofficial fan project, not endorsed by either. All artwork is original.
 
 MIT license.

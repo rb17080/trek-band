@@ -19,7 +19,7 @@ EDGE="/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
   cat "$SCENE"
   cat <<EOF
 
-const __body = ${FN}()
+const __body = playAt(${FN}())
 const __W = GW * Q
 const __H = GH * Q
 const __ease = 0.8 / SCENE_SECONDS
@@ -42,9 +42,9 @@ let n = 0
 const copy = () => { n++; return __svg.replace(/id="/g, 'id="c' + n + '_').replace(/url\(#/g, 'url(#c' + n + '_').replace(/href="#/g, 'href="#c' + n + '_') }
 const cell = (t: number, z: number) => \`<div style="display:inline-block;margin:3px;vertical-align:top"><div style="color:#a995c9;font:11px system-ui">\${t}s</div><div class="f" data-t="\${t}" style="width:\${__W * z}px;height:\${__H * z}px;background:\${C.bg};overflow:hidden;line-height:0"><div style="transform:scale(\${z});transform-origin:0 0">\${copy()}</div></div></div>\`
 const freeze = "<script>document.querySelectorAll('.f').forEach(f=>{const s=f.querySelector('svg');s.pauseAnimations();s.setCurrentTime(+f.dataset.t)})</script>"
-const times = Array.from({ length: 18 }, (_, i) => i)
+const times = Array.from({ length: 18 }, (_, i) => +(i * PLAY_SECONDS / 17).toFixed(2))
 fs.writeFileSync(process.argv[2] + '/frames.html', '<html><body style="margin:4px;background:#1c1c1c;width:1130px">' + times.map(t => cell(t, 2)).join('') + freeze + '</body></html>')
-fs.writeFileSync(process.argv[2] + '/band.html', \`<html><body style="margin:0;background:#1c1c1c;font-family:system-ui;font-size:14px"><div style="margin:12px;width:545px;display:flex;align-items:center;justify-content:space-between;background:\${C.bg};border-radius:12px;overflow:hidden;padding-left:16px;box-sizing:border-box"><span style="color:\${C.text}"><b>4%</b> <span style="color:\${C.dim}">4:39:12</span> &nbsp; <b>49%</b> <span style="color:\${C.dim}">1d 18:03:12</span></span><div class="f" data-t="8" style="line-height:0">\${copy()}</div></div>\${freeze}</body></html>\`)
+fs.writeFileSync(process.argv[2] + '/band.html', \`<html><body style="margin:0;background:#1c1c1c;font-family:system-ui;font-size:14px"><div style="margin:12px;width:545px;display:flex;align-items:center;justify-content:space-between;background:\${C.bg};border-radius:12px;overflow:hidden;padding-left:16px;box-sizing:border-box"><span style="color:\${C.text}"><b>4%</b> <span style="color:\${C.dim}">4:39:12</span> &nbsp; <b>49%</b> <span style="color:\${C.dim}">1d 18:03:12</span></span><div class="f" data-t="5" style="line-height:0">\${copy()}</div></div>\${freeze}</body></html>\`)
 EOF
 } > "$OUT/build.ts"
 
@@ -53,7 +53,7 @@ WOUT="$(cygpath -w "$OUT")"
 rm -f "$OUT"/zoom-*.png
 "$EDGE" --headless=new --disable-gpu --hide-scrollbars --window-size=600,130 --screenshot="$WOUT\\band.png" "file:///$OUT/band.html" >/dev/null 2>&1
 "$EDGE" --headless=new --disable-gpu --hide-scrollbars --window-size=1140,1270 --screenshot="$WOUT\\frames.png" "file:///$OUT/frames.html" >/dev/null 2>&1
-python -W ignore "$K/flashcheck.py" "$OUT"
+FLASH_SECONDS=10 python -W ignore "$K/flashcheck.py" "$OUT"
 echo "frames (0..17 s, frozen, 2x): $OUT/frames.png"
 echo "band at 1x (t=8 s):           $OUT/band.png"
 echo "luminance curve:              $OUT/flicker.png"

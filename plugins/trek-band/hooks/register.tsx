@@ -32,6 +32,14 @@ const C = {
 const SCENE_SECONDS = 17.17
 // How many times a scene plays before the next one
 const ROUNDS = 1
+// Stories are written on SCENE_SECONDS and played this long: the finished SVG is sped up whole
+const PLAY_SECONDS = 10
+
+// Every animation's dur and begin, scaled from the authored timeline to the played one
+function playAt(svg: string) {
+  const f = PLAY_SECONDS / SCENE_SECONDS
+  return svg.replace(/\b(dur|begin)="(-?[0-9.]+)s"/g, (_, attr, v) => `${attr}="${(Number(v) * f).toFixed(4)}s"`)
+}
 
 // Discrete on/off over a loop: visible inside each [start, end) window (seconds)
 function windows(on: [number, number][], dur: number) {
@@ -6914,8 +6922,8 @@ function drawScene(index: number) {
   const sc = SCENES[index]
   const art =
     sc.w === SCENE_W && sc.h === SCENE_H
-      ? sc.draw()
-      : `<svg width="${SCENE_W}" height="${SCENE_H}" viewBox="0 0 ${sc.w} ${sc.h}" preserveAspectRatio="xMidYMid slice">${sc.draw()}</svg>`
+      ? playAt(sc.draw())
+      : `<svg width="${SCENE_W}" height="${SCENE_H}" viewBox="0 0 ${sc.w} ${sc.h}" preserveAspectRatio="xMidYMid slice">${playAt(sc.draw())}</svg>`
   const title = `<text x="5" y="${SCENE_H - 4}" font-family="system-ui,Segoe UI,sans-serif" font-size="6.5" font-weight="700" letter-spacing="1" fill="${C.dim}" stroke="#16101f" stroke-width="2" stroke-linejoin="round" paint-order="stroke" text-rendering="geometricPrecision">${sc.name.toUpperCase()}</text>`
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${SCENE_W}" height="${SCENE_H}" viewBox="0 0 ${SCENE_W} ${SCENE_H}" shape-rendering="crispEdges">${art}${title}</svg>`
 }
@@ -7150,7 +7158,7 @@ function findScene(q: string) {
 let shownAt = 0
 let rotation: { cancel: () => void } | undefined
 
-const SHOW_MS = SCENE_SECONDS * ROUNDS * 1000
+const SHOW_MS = PLAY_SECONDS * ROUNDS * 1000
 
 // Starts the current scene's clock and sets the timer for the next one. When the timer fires,
 // the scene changes; it never second-guesses the timer (that check used to fire a little early,

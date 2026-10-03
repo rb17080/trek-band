@@ -21,7 +21,7 @@ from PIL import Image, ImageDraw
 
 out = sys.argv[1].rstrip('/\\')
 svg = open(os.path.join(out, 'scene.svg'), encoding='utf-8').read()
-SECONDS = 17.17
+SECONDS = float(__import__('os').environ.get('FLASH_SECONDS', '17.17'))
 STEP = 0.05
 frames = [round(i * STEP, 3) for i in range(int(SECONDS / STEP) + 1)]
 COLS = 8

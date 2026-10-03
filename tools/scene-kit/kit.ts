@@ -246,5 +246,13 @@ const DATHON_HD: CrabHD = {
 }
 
 
-// Every scene's story runs exactly this long, once per showing
+// Every scene's story is written on this timeline...
 const SCENE_SECONDS = 17.17
+// ...and plays this long in the band: the finished SVG is sped up as a whole (playAt)
+const PLAY_SECONDS = 10
+
+// Every animation's dur and begin, scaled from the authored timeline to the played one
+function playAt(svg: string) {
+  const f = PLAY_SECONDS / SCENE_SECONDS
+  return svg.replace(/\b(dur|begin)="(-?[0-9.]+)s"/g, (_, attr, v) => `${attr}="${(Number(v) * f).toFixed(4)}s"`)
+}

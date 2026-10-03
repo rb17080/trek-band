@@ -50,7 +50,7 @@ await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, dev
 await send('Page.navigate', { url: 'file:///' + path.resolve(page).replace(/\\/g, '/') })
 for (let i = 0; i < 120 && !events.includes('Page.loadEventFired'); i++) await sleep(100)
 await evalJs('document.fonts.ready.then(() => document.fonts.size)')
-const dur = await evalJs(`(() => { const s = document.getElementById('video'); s.pauseAnimations(); s.setCurrentTime(0); return 37 })()`)
+const dur = await evalJs(`(() => { const s = document.getElementById('video'); s.pauseAnimations(); s.setCurrentTime(0); return +s.getAttribute('data-dur') })()`)
 
 const total = Math.round(dur * FPS)
 const frames = only ? only.split(',').map(t => Math.round(Number(t) * FPS)) : Array.from({ length: total }, (_, i) => i)

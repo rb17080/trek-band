@@ -3,7 +3,7 @@
 
 const VW = 1280
 const VH = 720
-const DUR = 37 // seconds
+const DUR = 28 // seconds
 
 const INK = '#140f1f'
 const LILAC = '#c9a7ff'
@@ -74,12 +74,16 @@ function segTitle() {
 }
 
 // ---------- B: the band in the app ----------
-function ring(cx: number, cy: number, r: number, pct: number, icon: 'clock' | 'cal', a: number, b: number) {
+function ring(cx: number, cy: number, r: number, pct: number, icon: 'clock' | 'cal' | 'book' | 'ctx', a: number, b: number) {
   const circ = 2 * Math.PI * r
   let s = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#241a36" stroke="#3d2d58" stroke-width="4"/>`
   s += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${LILAC}" stroke-width="4" stroke-linecap="round" transform="rotate(-90 ${cx} ${cy})" stroke-dasharray="0 ${circ}">${track('stroke-dasharray', [[a, `0 ${circ}`], [b, `${(circ * pct) / 100} ${circ}`]])}</circle>`
   s +=
-    icon === 'clock'
+    icon === 'book'
+      ? `<path d="M${cx} ${cy - 5}q-5 -3 -10 -1v13q5 -2 10 1zM${cx} ${cy - 5}q5 -3 10 -1v13q-5 -2 -10 1z" fill="none" stroke="${DIM}" stroke-width="2.2" stroke-linejoin="round"/>`
+      : icon === 'ctx'
+      ? `<path d="M${cx - 9} ${cy - 6}h18M${cx - 9} ${cy}h18M${cx - 9} ${cy + 6}h11" stroke="${DIM}" stroke-width="2.6" stroke-linecap="round"/>`
+      : icon === 'clock'
       ? `<circle cx="${cx}" cy="${cy}" r="10" fill="none" stroke="${DIM}" stroke-width="2.6"/><path d="M${cx} ${cy - 6}V${cy}l4 3" stroke="${DIM}" stroke-width="2.6" fill="none" stroke-linecap="round"/>`
       : `<rect x="${cx - 10}" y="${cy - 8}" width="20" height="18" rx="2.5" fill="none" stroke="${DIM}" stroke-width="2.6"/><path d="M${cx - 10} ${cy - 2}h20M${cx - 5} ${cy - 12}v5M${cx + 5} ${cy - 12}v5" stroke="${DIM}" stroke-width="2.6"/>`
   return s
@@ -100,20 +104,23 @@ function segProduct() {
   s += body(228, 579, 'Type / for commands', 20, '#7d7787')
   s += body(204, 640, '+   Auto', 18, '#8d8797')
   s += body(560, 640, '? for shortcuts', 18, '#7d7787')
-  // the status-line cache timer, counting down from 59:41
+  // the cache timer next to the model name, counting down from 59:41
   let clockDigits = ''
   for (let k = 0; k <= 12; k++) {
     const secs = 3581 - k
-    const label = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
-    clockDigits += `<g opacity="0">${track('opacity', [[5.8 + k - 0.001, 0], [5.8 + k, 1], [5.8 + k + 0.999, 1], [5.8 + k + 1, 0]])}${body(1010, 640, label, 18, '#5fd38a', 'end')}</g>`
+    const label = `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`
+    clockDigits += `<g opacity="0">${track('opacity', [[5.8 + k - 0.001, 0], [5.8 + k, 1], [5.8 + k + 0.999, 1], [5.8 + k + 1, 0]])}${body(1024, 640, `Cache: ${label}`, 18, '#5fd38a', 'end')}</g>`
   }
   s += clockDigits
   s += body(1076, 640, 'Opus', 18, '#cfc8da', 'end')
   // the band rises from behind the prompt
   s += `<g opacity="0">${fadeIn(4.5, 5.2, 99, 100)}<g>${track('transform', [[4.5, '0 44'], [5.4, '0 0']], 'translate')}`
   s += `<rect x="200" y="416" width="880" height="112" rx="16" fill="#2a1f3d"/>`
-  s += ring(250, 472, 22, 37, 'clock', 5.4, 6.6) + display(288, 482, '37%', 30, TEXT, 1) + body(362, 481, '4:39', 22, DIM)
-  s += ring(476, 472, 22, 53, 'cal', 5.6, 6.8) + display(514, 482, '53%', 30, TEXT, 1) + body(588, 481, '1:18:03', 22, DIM)
+  // four meters, two per row: session, weekly, Fable weekly, context window
+  const meter = (x: number, y: number, pct: number, icon: 'clock' | 'cal' | 'book' | 'ctx', sub: string, a: number) =>
+    ring(x, y, 17, pct, icon, a, a + 1.2) + display(x + 30, y + 9, `${pct}%`, 24, TEXT, 1) + body(x + 92, y + 8, sub, 19, DIM)
+  s += meter(244, 446, 37, 'clock', '3:39', 5.4) + meter(474, 446, 53, 'cal', '1:07:49', 5.55)
+  s += meter(244, 498, 18, 'book', '1:07:49', 5.7) + meter(474, 498, 26, 'ctx', '264k', 5.85)
 
   s += `<g>${sceneAt(0, 872, 418, 1.15)}</g>`
   s += `</g></g>`
@@ -121,57 +128,51 @@ function segProduct() {
   return s + '</g>'
 }
 
-// ---------- C: all thirteen scenes ----------
-const SERIES = ['TNG', 'TNG', 'VOYAGER', 'TNG · FILM', 'VOYAGER', 'TNG', 'VOYAGER', 'TNG', 'VOYAGER', 'TNG', 'TNG', 'TNG', 'TNG']
-
-function segFilmstrip() {
-  const start = 10.2
-  const step = 1.3
-  const gap = 600
-  const scale = 3
-  let s = `<g opacity="0">${fadeIn(9.9, 10.6, 26.4, 27.1)}`
-  s += `<g opacity="0">${fadeIn(10.4, 11.1, 26.4, 27.1)}${display(640, 92, `${SCENES.length} SCENES · TNG + VOYAGER`, 34, LILAC, 9, 'middle')}</g>`
-  // step from card to card: hold, then glide
-  const pts: [number, string][] = [[start, '0 0']]
-  for (let i = 1; i < SCENES.length; i++) {
-    const t = start + i * step
-    pts.push([t - 0.55, `${-(i - 1) * gap} 0`])
-    pts.push([t, `${-i * gap} 0`])
-  }
-  s += `<g>${track('transform', pts, 'translate')}`
-  SCENES.forEach((sc, i) => {
-    const x = 640 - (180 * scale) / 2 + i * gap
-    s += `<rect x="${x - 3}" y="${157}" width="${180 * scale + 6}" height="${96 * scale + 6}" rx="18" fill="#3b2d58"/>`
-    s += `<clipPath id="vclip${i}"><rect x="${x}" y="160" width="${180 * scale}" height="${96 * scale}" rx="15"/></clipPath>`
-    s += `<g clip-path="url(#vclip${i})">${sceneAt(i, x, 160, scale)}</g>`
-    s += display(x + 90 * scale, 520, sc.name.toUpperCase(), 34, TEXT, 4, 'middle')
-    s += display(x + 90 * scale, 556, SERIES[i] ?? '', 18, DIM, 6, 'middle')
+// ---------- C: every scene, in a grid ----------
+function segGrid() {
+  const cols = 5
+  const scale = 1.1
+  const w = 180 * scale
+  const h = 96 * scale
+  const gx = 14
+  const gy = 12
+  const x0 = (VW - (cols * w + (cols - 1) * gx)) / 2
+  const y0 = 84
+  let s = `<g opacity="0">${fadeIn(9.9, 10.6, 17.6, 18.2)}`
+  s += `<g opacity="0">${fadeIn(10.2, 10.9, 17.6, 18.2)}${display(640, 58, `${SCENES.length} SCENES · TNG + VOYAGER`, 30, LILAC, 9, 'middle')}</g>`
+  SCENES.forEach((_, i) => {
+    const x = x0 + (i % cols) * (w + gx)
+    const y = y0 + Math.floor(i / cols) * (h + gy)
+    const a = 10.4 + Math.floor(i / cols) * 0.35
+    s += `<g opacity="0">${fadeIn(a, a + 0.7, 17.6, 18.2)}`
+    s += `<rect x="${x - 2}" y="${y - 2}" width="${w + 4}" height="${h + 4}" rx="9" fill="#3b2d58"/>`
+    s += `<clipPath id="vclip${i}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="7"/></clipPath>`
+    s += `<g clip-path="url(#vclip${i})">${sceneAt(i, x, y, scale)}</g></g>`
   })
-  s += '</g>'
   return s + '</g>'
 }
 
 // ---------- D: what it does ----------
 function segFeatures() {
   const rows: [string, string][] = [
-    ['LIVE 5-HOUR + WEEKLY LIMITS', 'rings turn amber at 75%, red at 90%'],
-    ['13 STORIES, 17 SECONDS EACH', 'each plays twice, then the next scene'],
-    ['PROMPT CACHE TIMER', 'in the status line: green countdown, then red once cold'],
-    ['FLASH-CHECKED', 'every frame measured: no strobing, no white-outs'],
+    ['LIVE USAGE', 'session, weekly, per-model and context'],
+    ['23 SCENES, 10 SECONDS EACH', 'shuffled, each plays once'],
+    ['PROMPT CACHE TIMER', 'by the model name: green, then red once cold'],
+    ['FLASH-CHECKED', 'no strobing, no white-outs, measured'],
   ]
-  let s = `<g opacity="0">${fadeIn(26.8, 27.5, 30.6, 31.2)}`
+  let s = `<g opacity="0">${fadeIn(17.6, 18.3, 21.4, 22.0)}`
   rows.forEach(([head, sub], i) => {
-    const a = 27.3 + i * 0.25
+    const a = 18.1 + i * 0.25
     const y = 214 + i * 108
-    s += `<g opacity="0">${fadeIn(a, a + 0.6, 30.6, 31.2)}<g>${rise(a, a + 0.7, 16)}`
+    s += `<g opacity="0">${fadeIn(a, a + 0.6, 21.4, 22.0)}<g>${rise(a, a + 0.7, 16)}`
     s += `<rect x="128" y="${y - 30}" width="10" height="10" fill="${LILAC}"/>`
     s += display(156, y - 16, head, 36, TEXT, 3)
     s += body(158, y + 20, sub, 22, DIM)
     s += '</g></g>'
   })
-  s += `<rect x="749" y="223" width="${180 * 2.4 + 6}" height="${96 * 2.4 + 6}" rx="16" fill="#3b2d58"/>`
-  s += `<clipPath id="vclipF"><rect x="752" y="226" width="${180 * 2.4}" height="${96 * 2.4}" rx="13"/></clipPath>`
-  s += `<g clip-path="url(#vclipF)">${sceneAt(7, 752, 226, 2.4)}</g>`
+  s += `<rect x="797" y="243" width="${180 * 2.2 + 6}" height="${96 * 2.2 + 6}" rx="16" fill="#3b2d58"/>`
+  s += `<clipPath id="vclipF"><rect x="800" y="246" width="${180 * 2.2}" height="${96 * 2.2}" rx="13"/></clipPath>`
+  s += `<g clip-path="url(#vclipF)">${sceneAt(0, 800, 246, 2.2)}</g>`
   return s + '</g>'
 }
 
@@ -182,27 +183,27 @@ function typed(x: number, y: number, s: string, a: number, b: number, id: string
 }
 
 function segInstall() {
-  let s = `<g opacity="0">${fadeIn(31.0, 31.7, 99, 100)}`
-  s += `<g>${bigClawd(580, 40, 2.6, [[33.6, 34.2], [34.6, 35.2]])}</g>`
+  let s = `<g opacity="0">${fadeIn(21.8, 22.5, 99, 100)}`
+  s += `<g>${bigClawd(580, 40, 2.6, [[24.4, 25.0], [25.4, 26.0]])}</g>`
   s += display(640, 230, 'INSTALL', 40, LILAC, 12, 'middle')
   s += `<rect x="170" y="262" width="940" height="152" rx="16" fill="#0e0a15" stroke="#3b2d58"/>`
   s += text(202, 320, '›', 28, LILAC, 'font-family="JetBrains Mono, Consolas, monospace"')
-  s += typed(230, 320, '/plugin marketplace add rb17080/trek-band', 31.8, 32.9, 'vtype1')
+  s += typed(230, 320, '/plugin marketplace add rb17080/trek-band', 22.6, 23.7, 'vtype1')
   s += text(202, 378, '›', 28, LILAC, 'font-family="JetBrains Mono, Consolas, monospace"')
-  s += typed(230, 378, '/plugin install trek-band@trek-band', 33.1, 34.0, 'vtype2')
-  s += `<g opacity="0">${fadeIn(34.2, 34.9, 99, 100)}`
-  s += body(640, 470, 'Claude Code 2.1.287+  ·  desktop Code tab and terminal', 22, DIM, 'middle')
+  s += typed(230, 378, '/plugin install trek-band@trek-band', 23.9, 24.8, 'vtype2')
+  s += `<g opacity="0">${fadeIn(25.0, 25.7, 99, 100)}`
+  s += body(640, 470, 'Claude Code 2.1.286+  ·  desktop Code tab and terminal', 22, DIM, 'middle')
   s += display(640, 520, 'GITHUB.COM/RB17080/TREK-BAND', 26, TEXT, 6, 'middle')
   s += '</g>'
   return s + '</g>'
 }
 
 function composition() {
-  let s = `<svg xmlns="http://www.w3.org/2000/svg" id="video" width="${VW}" height="${VH}" viewBox="0 0 ${VW} ${VH}">`
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" id="video" data-dur="${DUR}" width="${VW}" height="${VH}" viewBox="0 0 ${VW} ${VH}">`
   s += `<defs><radialGradient id="vglow" cx="0.5" cy="0.42" r="0.75"><stop offset="0" stop-color="#2b1f45"/><stop offset="1" stop-color="${INK}"/></radialGradient></defs>`
   s += `<rect width="${VW}" height="${VH}" fill="url(#vglow)"/>`
   s += starfield()
-  s += segTitle() + segProduct() + segFilmstrip() + segFeatures() + segInstall()
+  s += segTitle() + segProduct() + segGrid() + segFeatures() + segInstall()
   return s + '</svg>'
 }
 

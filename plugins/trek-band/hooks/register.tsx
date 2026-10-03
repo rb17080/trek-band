@@ -4871,7 +4871,7 @@ const countdownCells = (l: Limit) => (l.kind === 'seven_day' ? 7 : 5)
 function countdown(l: Limit, now: number) {
   const at = resetAt(l, now)
   if (!(at > now)) return '0:00'
-  const mins = Math.floor((at - now) / 60000)
+  const mins = Math.ceil((at - now) / 60000)
   const d = Math.floor(mins / 1440)
   const h = Math.floor((mins % 1440) / 60)
   const m = String(mins % 60).padStart(2, '0')
@@ -4915,15 +4915,11 @@ let lastMessageAt = 0
 // look like ordinary digits but are all the same width.
 const evenDigits = (t: string) => t.replace(/[0-9]/g, d => String.fromCodePoint(0x1d7e2 + Number(d)))
 
-// "0:59": the timer ticks once a minute, because every update makes the desktop app rebuild the
-// band, scene included
-const hoursMinutes = (mins: number) => `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`
-
+// "59:57", from "60:00" down; past an hour cold, "1:02:03"
 function clockText(secs: number) {
-  const h = Math.floor(secs / 3600)
-  const m = Math.floor((secs % 3600) / 60)
   const ss = String(secs % 60).padStart(2, '0')
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
+  if (secs <= 3600) return `${String(Math.floor(secs / 60)).padStart(2, '0')}:${ss}`
+  return `${Math.floor(secs / 3600)}:${String(Math.floor((secs % 3600) / 60)).padStart(2, '0')}:${ss}`
 }
 
 // Counting down to the cache's expiry while warm; counting up once cold; null once stale
@@ -4932,17 +4928,21 @@ function cacheTimer(now: number): { text: string; isWarm: boolean } | null {
   const since = now - lastMessageAt
   if (since >= STALE_MS) return null
   return since < CACHE_MS
-    ? { text: hoursMinutes(Math.ceil((CACHE_MS - since) / 60000)), isWarm: true }
-    : { text: hoursMinutes(Math.floor((since - CACHE_MS) / 60000)), isWarm: false }
+    ? { text: clockText(Math.ceil((CACHE_MS - since) / 1000)), isWarm: true }
+    : { text: clockText(Math.floor((since - CACHE_MS) / 1000)), isWarm: false }
 }
 
-// Every second: a tick that redraws the coloured cache timer (only that hook reads it)
+// A message from either side: the cache's hour starts again
 async function markMessage($: Host) {
   lastMessageAt = await $.clock.now()
   await update($, lastMessage, () => lastMessageAt)
 }
 
+// Every second while there is a timer to show. The desktop app rebuilds the band on every update,
+// so the band reads the tick too: each rebuild then carries the scene advanced to this very second
+// (sceneAt). Left out, the app rebuilt it from its last drawing, rewinding the scene every second.
 async function tickCacheStatus($: Host) {
+  if (!cacheTimer(await $.clock.now())) return
   await update($, tick, n => n + 1)
 }
 
@@ -4975,7 +4975,7 @@ export const register: Register = on => {
       void advanceIfDue($)
     })
     rotateAfter($)
-    $.clock.every(60_000, () => void tickCacheStatus($))
+    $.clock.every(1000, () => void tickCacheStatus($))
     return next(e)
   })
 
@@ -5023,6 +5023,7 @@ export const register: Register = on => {
     if (e.props.hasSurvey) return next(e)
     const list = await read($, limits)
     const idx = await read($, scene)
+    await read($, tick)
     const now = await $.clock.now()
     const shown = [
       list.find(l => l.kind === 'five_hour'),

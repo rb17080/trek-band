@@ -411,7 +411,9 @@ function causeAndEffect() {
   const rX = 66
   const rY = 28
   const hair = '#3b2518'
-  const hairHi = '#5e3a26'
+  const hairHi = '#6a4228'
+  const beard = '#2e1a10'
+  const beardHi = '#4a2c1a'
   s += ceCrab(
     CE_RIKER, rX, rY, 'left',
     [[0, -1, -1], [7.7, -1, 0], [9.5, -1, -1]],
@@ -419,13 +421,18 @@ function causeAndEffect() {
     (p, x, y) => p.rect(x, y, 2, 2, EYE_HD),
     EYE_HD,
     p => {
-      p.rect(rX + 2, rY - 1, 14, 1, hair).set(rX + 6, rY - 1, hairHi).set(rX + 11, rY - 1, hairHi)
-      p.rect(rX + 1, rY, 3, 1, hair).rect(rX + 14, rY, 3, 1, hair).set(rX + 8, rY, hair).set(rX + 9, rY, hair)
-      // sideburns into a full beard
-      p.rect(rX, rY + 1, 1, 4, hair).rect(rX + 17, rY + 1, 1, 4, hair)
-      p.rect(rX + 1, rY + 4, 2, 1, hair).rect(rX + 15, rY + 4, 2, 1, hair)
-      p.rect(rX, rY + 5, 18, 1, hair).rect(rX + 7, rY + 5, 4, 1, '#4a2c1c')
-      p.set(rX + 3, rY + 5, hairHi).set(rX + 14, rY + 5, hairHi)
+      // a full head of dark-brown hair: a cap above the head and a low hairline
+      p.rect(rX + 4, rY - 2, 10, 1, hairHi).set(rX + 7, rY - 2, '#8a5a36').set(rX + 11, rY - 2, '#8a5a36')
+      p.rect(rX + 2, rY - 1, 14, 1, hair).rect(rX + 3, rY - 1, 3, 1, hairHi).set(rX + 9, rY - 1, hairHi).set(rX + 13, rY - 1, hairHi)
+      p.rect(rX + 1, rY, 16, 1, hair).set(rX + 5, rY, hairHi).set(rX + 12, rY, hairHi)
+      // sideburns running down into a full beard over the lower face
+      p.rect(rX, rY + 1, 2, 2, beard).rect(rX + 16, rY + 1, 2, 2, beard)
+      p.rect(rX, rY + 3, 3, 1, beard).rect(rX + 13, rY + 3, 5, 1, beard)
+      p.rect(rX, rY + 4, 18, 1, beard).rect(rX + 6, rY + 4, 6, 1, beardHi) // moustache
+      p.rect(rX, rY + 5, 18, 1, beard).rect(rX + 7, rY + 5, 3, 1, '#a8503a') // mouth
+      p.set(rX + 3, rY + 5, beardHi).set(rX + 14, rY + 5, beardHi)
+      // the chin, over the collar
+      p.rect(rX + 8, rY + 6, 4, 1, beardHi).rect(rX + 8, rY + 7, 3, 1, beard)
       // combadge and three pips
       p.rect(rX + 12, rY + 7, 2, 2, '#e8c547').set(rX + 12, rY + 7, '#fff3b0')
       p.set(rX + 2, rY + 6, '#e8c547').set(rX + 4, rY + 6, '#e8c547').set(rX + 6, rY + 6, '#e8c547')

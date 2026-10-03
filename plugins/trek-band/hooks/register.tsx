@@ -5218,10 +5218,1644 @@ function bestOfBothWorldsHD() {
   return s
 }
 
+// ---------- Yesterday's Enterprise ----------
+// A quiet bridge. On the viewscreen a temporal rift slowly opens, and the battered
+// Enterprise-C drifts out of it. The timeline shifts: the bridge goes dark and
+// wartime-red, and Tasha Yar is standing at tactical again. Picard looks to her,
+// she nods; he raises his claw. The Enterprise-C turns, sails back into the rift,
+// the rift closes, and the bridge (and history) quietly goes back to normal.
+// Everything moves on eased splines; pose swaps go through in-between frames.
+
+const YE_PICARD: CrabHD = {
+  skin: '#d97757',
+  light: '#eb9575',
+  shade: '#b85f43',
+  upper: '#1c1424',
+  lower: '#b3262e',
+  lowerShade: '#8e1d24',
+  legs: '#1c1424',
+  rim: '#f2a985',
+}
+
+const YE_TASHA: CrabHD = {
+  skin: '#d97757',
+  light: '#eb9575',
+  shade: '#b85f43',
+  upper: '#1c1424',
+  lower: '#d4a22e',
+  lowerShade: '#a37a1c',
+  legs: '#1c1424',
+  rim: '#f2a985',
+}
+
+// a plain rect in art pixels
+const yeR = (x: number, y: number, w: number, h: number, c: string, extra = '') =>
+  `<rect x="${x * Q}" y="${y * Q}" width="${w * Q}" height="${h * Q}" fill="${c}"${extra}/>`
+
+function yeRnd(seed: number) {
+  let s = seed
+  return () => ((s = (s * 9301 + 49297) % 233280) / 233280)
+}
+
+// One smooth animation on the story timeline: keys are [seconds, value]
+const YE_EASE = '0.42 0 0.58 1'
+function yeAnim(attr: string, keys: [number, string][], tag = 'animate', extra = '') {
+  const T = SCENE_SECONDS
+  const k = [...keys]
+  if (k[0][0] > 0) k.unshift([0, k[0][1]])
+  if (k[k.length - 1][0] < T) k.push([T, k[k.length - 1][1]])
+  const kt = k.map(([t]) => +(t / T).toFixed(4))
+  kt[kt.length - 1] = 1
+  const splines = k.slice(1).map(() => YE_EASE).join(';')
+  return `<${tag} attributeName="${attr}" ${extra}dur="${T}s" repeatCount="indefinite" calcMode="spline" keySplines="${splines}" values="${k.map(([, v]) => v).join(';')}" keyTimes="${kt.join(';')}"/>`
+}
+const yeFade = (keys: [number, number][]) => yeAnim('opacity', keys.map(([t, v]) => [t, String(v)] as [number, string]))
+// ambient loops divide the story length (and start already running, via a negative begin),
+// so they are in the same phase at the restart
+const yeAmb = (vals: string, div: number, begin = 0) =>
+  `<animate attributeName="opacity" values="${vals}" dur="${(SCENE_SECONDS / div).toFixed(4)}s" begin="${-begin}s" repeatCount="indefinite"/>`
+
+// screen content area, in art pixels
+const YE_SX = 28
+const YE_SY = 2
+const YE_SW = 58
+const YE_SH = 24
+
+// the Enterprise-C (Ambassador class), side on, facing right, battle-scarred.
+// Drawn with its top-left at 0,0; it is 30 x 9 art pixels.
+function yeShipC() {
+  const pal: Record<string, string> = {
+    s: '#dcdde8', w: '#e2e3ec', W: '#c3c4d1', g: '#85869a', h: '#a9abbb', H: '#c6c8d5', k: '#66677b',
+    N: '#cdcedc', n: '#9a9cae', b: '#e8553a', r: '#9a3626', c: '#4f8fc8', p: '#7d7e92', d: '#e0a050',
+    o: '#ffe6a0', x: '#4a4554', X: '#2e2a36',
+  }
+  const rows = [
+    '................swws..........',
+    '..........wwwWWxxWWWWWWWWww...',
+    'NNNNNxNNNb.gWWoWXxoWWoWWoWWWg.',
+    'nnnnnnnxnr..gggXgggggxgggggg..',
+    '.ccccccc.....kgg.xgggg........',
+    '......pp......hk..............',
+    '.....hhhhhHHHHhhxhhhhhd.......',
+    '....hhhxhhhhhhhXxhhhhhk.......',
+    '.....kkkkkkkkkkkkkkkk.........',
+  ]
+  let s = new Pix().rows(rows, 0, 0, pal).svg()
+  // hull breaches: small dim embers that breathe slowly
+  const breach = new Pix().set(17, 2, '#ff8a4a').set(15, 3, '#ff7a3a').set(16, 7, '#ff8a4a').set(7, 3, '#ff7a3a')
+  s += `<g>${breach.svg()}${yeAmb('0.55;1;0.55', 7)}</g>`
+  // a thin wisp of venting plasma trailing behind
+  s += `<g opacity="0.35">${new Pix().rect(-3, 7, 3, 1, '#9fb0c8').rect(-6, 7, 2, 1, '#7d8aa6').set(-8, 6, '#6a7590').svg()}</g>`
+  return s
+}
+
+// the Enterprise-C bow-on, for the middle of her turn (14 x 6, centred on the hull)
+function yeShipFront() {
+  const pal: Record<string, string> = {
+    s: '#dcdde8', w: '#e2e3ec', W: '#c3c4d1', g: '#85869a', h: '#a9abbb', k: '#66677b',
+    N: '#cdcedc', n: '#9a9cae', c: '#4f8fc8', p: '#7d7e92', d: '#e0a050', o: '#ffe6a0', x: '#4a4554',
+  }
+  const rows = [
+    '.....swws.....',
+    '.wWWWWWWWWWWw.',
+    'gWoWWWxWWWoWWg',
+    '.gggggkkgxggg.',
+    'Nn.p.hddh.p.nN',
+    'cc...hhhh...cc',
+  ]
+  return `<g transform="translate(${-7 * Q} ${-3 * Q})">${new Pix().rows(rows, 0, 0, pal).svg()}</g>`
+}
+
+// the temporal rift: a slow, soft violet swirl around a dark eye
+function yeRift() {
+  const T = SCENE_SECONDS
+  let arms = ''
+  const seg = (base: number, t0: number, t1: number) => {
+    const pts: string[] = []
+    for (let t = t0; t <= t1 + 0.001; t += 0.2) {
+      const r = 3.5 + t * 2.7
+      pts.push(`${(r * Math.cos(base + t)).toFixed(1)},${(r * Math.sin(base + t)).toFixed(1)}`)
+    }
+    return pts.join(' ')
+  }
+  const bands: [number, number, number, string, number][] = [
+    [0, 1.8, 2.6, '#d9b4ff', 0.7],
+    [1.8, 3.6, 2.2, '#bb92f0', 0.6],
+    [3.6, 5.4, 1.8, '#9672da', 0.48],
+    [5.4, 6.8, 1.3, '#7454b6', 0.34],
+  ]
+  for (let a = 0; a < 3; a++) {
+    const base = (a * 2 * Math.PI) / 3
+    for (const [t0, t1, w, c, o] of bands) {
+      arms += `<polyline points="${seg(base, t0, t1)}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" opacity="${o}"/>`
+    }
+    arms += `<polyline points="${seg(base + Math.PI / 3, 1.0, 4.6)}" fill="none" stroke="#ffb27a" stroke-width="1" opacity="0.4"/>`
+  }
+  let ring = ''
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2
+    ring += `<rect x="${(25 * Math.cos(a) - 1).toFixed(1)}" y="${(25 * Math.sin(a) - 1).toFixed(1)}" width="2" height="2" fill="#8a6ad2" opacity="${i % 2 ? 0.3 : 0.45}"/>`
+  }
+  return (
+    `<circle r="32" fill="url(#yeRiftGlow)"/>` +
+    `<g>${ring}<animateTransform attributeName="transform" type="rotate" values="360;0" dur="${(T / 2).toFixed(4)}s" repeatCount="indefinite"/></g>` +
+    `<g>${arms}<animateTransform attributeName="transform" type="rotate" values="0;360" dur="${(T / 3).toFixed(4)}s" repeatCount="indefinite"/></g>` +
+    `<circle r="5.5" fill="#1a0d30" opacity="0.9"/><circle r="5.5" fill="none" stroke="#c49cff" stroke-width="1" opacity="0.45"/><circle r="2.5" fill="#2c1850"/>`
+  )
+}
+
+function yesterdaysEnterprise() {
+  const T = SCENE_SECONDS
+  const W = GW * Q
+  const H = GH * Q
+
+  // ---- the beat sheet
+  const riftOpen: [number, number] = [1.8, 4.4]
+  const shipOut: [number, number] = [4.4, 7.2]
+  const grimIn: [number, number] = [6.2, 8.6]
+  const tashaIn: [number, number] = [6.6, 8.6]
+  const lookAtTasha: [number, number] = [8.8, 10.0]
+  const nod: [number, number] = [9.3, 9.8]
+  const clawRaise: [number, number] = [10.3, 14.7] // rest -> half -> up and back, in-betweens from the kit
+  const turn: [number, number] = [11.0, 12.4]
+  const goBack: [number, number] = [12.4, 14.2]
+  const riftClose: [number, number] = [14.0, 15.9]
+  const grimOut: [number, number] = [14.4, 16.2]
+
+  let s = `<defs>
+    <linearGradient id="yeFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="yeFade"><rect x="-10" y="-10" width="${W + 20}" height="${H + 20}" fill="url(#yeFadeG)"/></mask>
+    <linearGradient id="yeFadeCG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0.15"/><stop offset="0.1" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="yeFadeC"><rect x="-10" y="-10" width="${W + 20}" height="${H + 20}" fill="url(#yeFadeCG)"/></mask>
+    <linearGradient id="yeWall" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1a1420"/><stop offset="1" stop-color="#33273a"/></linearGradient>
+    <linearGradient id="yeSpace" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#05040c"/><stop offset="1" stop-color="#0d0a1c"/></linearGradient>
+    <radialGradient id="yeNeb"><stop offset="0" stop-color="#7b5bc6" stop-opacity="0.16"/><stop offset="1" stop-color="#7b5bc6" stop-opacity="0"/></radialGradient>
+    <radialGradient id="yeRiftGlow"><stop offset="0" stop-color="#b58cff" stop-opacity="0.5"/><stop offset="0.45" stop-color="#8656d0" stop-opacity="0.26"/><stop offset="1" stop-color="#5a3a9a" stop-opacity="0"/></radialGradient>
+    <radialGradient id="yeSpill"><stop offset="0" stop-color="#a27cff" stop-opacity="0.22"/><stop offset="1" stop-color="#a27cff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="yeWarm"><stop offset="0" stop-color="#ffcf9a" stop-opacity="0.12"/><stop offset="1" stop-color="#ffcf9a" stop-opacity="0"/></radialGradient>
+    <pattern id="yeScan" width="4" height="4" patternUnits="userSpaceOnUse"><rect y="2" width="4" height="2" fill="#000" opacity="0.08"/></pattern>
+    <clipPath id="yeScreen"><rect x="${YE_SX * Q}" y="${YE_SY * Q}" width="${YE_SW * Q}" height="${YE_SH * Q}"/></clipPath>
+  </defs>`
+
+  // ---- the bridge in peacetime, fading in from the band on the left
+  let back = `<rect x="-6" y="-6" width="${W + 12}" height="${H + 12}" fill="url(#yeWall)"/>`
+  back += yeR(0, 0, GW, 2, '#120d17') + yeR(0, 1, GW, 1, '#ffd9a0', ' opacity="0.3"')
+  // a soft warm wash: the normal, lived-in Enterprise-D
+  back += `<ellipse cx="${20 * Q}" cy="${16 * Q}" rx="60" ry="40" fill="url(#yeWarm)"/>`
+  // LCARS wall panel
+  const lc = new Pix()
+  lc.rect(9, 5, 15, 17, '#0b0910')
+  lc.rect(10, 6, 13, 2, '#f29a3a').rect(10, 8, 3, 12, '#f29a3a').set(10, 6, '#0b0910').set(22, 6, '#c9a7ff')
+  lc.rect(14, 9, 4, 2, '#c39be0').rect(19, 9, 4, 2, '#8aa7e8')
+  lc.rect(14, 12, 9, 1, '#f7c487')
+  lc.rect(14, 14, 3, 2, '#8aa7e8').rect(18, 14, 5, 2, '#c39be0')
+  lc.rect(14, 17, 5, 1, '#8aa7e8').rect(20, 17, 3, 1, '#f29a3a')
+  lc.rect(10, 20, 13, 1, '#b48fd6')
+  back += `<g opacity="0.6">${lc.svg()}</g>`
+  ;[[15, 19, 5], [18, 19, 6], [21, 19, 7]].forEach(([x, y, d], i) => {
+    back += `<g>${yeR(x, y, 2, 1, i === 1 ? '#c9a7ff' : '#f7c487')}${yeAmb('1;0.4;1', d)}</g>`
+  })
+  // wood trim, baseboard, carpet
+  const wall = new Pix()
+  wall.rect(0, 29, GW, 2, '#5e3f2c').rect(0, 29, GW, 1, '#8a6040')
+  wall.rect(0, 33, GW, 1, '#0f0b13')
+  wall.rect(0, 34, GW, 14, '#1d1724').rect(0, 34, GW, 1, '#2c2236')
+  wall.rect(0, 38, GW, 1, '#221b2a').rect(58, 43, GW - 58, 1, '#19141f')
+  for (let x = 2; x < GW; x += 9) wall.rect(x, 31, 1, 2, '#2a2030')
+  back += wall.svg()
+  // the rift's violet light on the wall and the floor
+  back += `<g opacity="0"><ellipse cx="${46 * Q}" cy="${31 * Q}" rx="90" ry="20" fill="url(#yeSpill)"/>${yeFade([[riftOpen[0], 0], [riftOpen[1], 1], [riftClose[0], 1], [riftClose[1], 0]])}</g>`
+
+  // ---- the alternate timeline: dark, cold, a steady red battle light
+  let grim = yeR(-3, -3, GW + 6, GH + 6, '#05060c', ' opacity="0.42"')
+  grim += yeR(0, 1, GW, 1, '#ff3a2a', ' opacity="0.5"')
+  grim += yeR(0, 32, GW, 1, '#c0302a', ' opacity="0.32"')
+  grim += yeR(88, 3, 2, 24, '#ff2e3a', ' opacity="0.35"')
+  // the LCARS panel shows a tactical plot instead
+  const tac = new Pix()
+  tac.rect(10, 6, 13, 15, '#140608')
+  tac.rect(10, 6, 13, 1, '#b8322a').rect(10, 7, 1, 14, '#b8322a').rect(10, 20, 13, 1, '#7a2420')
+  for (let y = 9; y < 20; y += 3) tac.rect(12, y, 10, 1, '#3a1012')
+  for (let x = 13; x < 22; x += 3) tac.rect(x, 8, 1, 12, '#3a1012')
+  tac.set(14, 11, '#ff6a4a').set(19, 13, '#ff6a4a').set(16, 16, '#ffb070').set(20, 17, '#ff6a4a')
+  grim += `<g opacity="0.75">${tac.svg()}</g>`
+  // a faint haze hanging in the air
+  grim += yeR(0, 22, GW, 7, '#3a3346', ' opacity="0.14"')
+  back += `<g opacity="0">${grim}${yeFade([[grimIn[0], 0], [grimIn[1], 1], [grimOut[0], 1], [grimOut[1], 0]])}</g>`
+  s += `<g mask="url(#yeFade)">${back}</g>`
+
+  // ---- the viewscreen
+  const bez = new Pix()
+  bez.rect(27, 0, 61, 27, '#0e0b12').rect(28, 0, 59, 1, '#4a4152').rect(27, 1, 1, 25, '#2a2330').rect(87, 1, 1, 25, '#2a2330')
+  bez.rect(28, 26, 59, 1, '#3a3142')
+  s += bez.svg()
+
+  let scr = `<rect x="${YE_SX * Q}" y="${YE_SY * Q}" width="${YE_SW * Q}" height="${YE_SH * Q}" fill="url(#yeSpace)"/>`
+  scr += `<ellipse cx="${70 * Q}" cy="${8 * Q}" rx="60" ry="20" fill="url(#yeNeb)"/>`
+  const rnd = yeRnd(41)
+  for (let y = YE_SY; y < YE_SY + YE_SH; y += 2) {
+    for (let x = YE_SX; x < YE_SX + YE_SW; x += 3) {
+      if (rnd() < 0.72) continue
+      const jx = x + Math.floor(rnd() * 3)
+      scr += yeR(jx, y, 1, 1, '#cdbaf0', ` opacity="${(0.15 + rnd() * 0.35).toFixed(2)}"`)
+    }
+  }
+  ;[[33, 5], [80, 20], [62, 4], [36, 22], [83, 6]].forEach(([x, y], i) => {
+    const glow = new Pix().set(x - 1, y, '#bfa8ee').set(x + 1, y, '#bfa8ee').set(x, y - 1, '#bfa8ee').set(x, y + 1, '#bfa8ee')
+    scr += `<g>${glow.svg()}${yeAmb('0.15;0.7;0.15', 6 - (i % 3), i * 0.6)}</g>`
+    scr += `<g>${new Pix().set(x, y, '#f4eeff').svg()}${yeAmb('0.6;1;0.6', 6 - (i % 3), i * 0.6)}</g>`
+  })
+
+  // the rift: opens out of nothing, swirls, closes calmly
+  const rx = 45 * Q
+  const ry = 14 * Q
+  const riftScale = yeAnim('transform', [[riftOpen[0], '0.05'], [riftOpen[1], '1'], [riftClose[0], '1'], [riftClose[1], '0.05']], 'animateTransform', 'type="scale" ')
+  scr += `<g transform="translate(${rx} ${ry})"><g>${riftScale}<g opacity="0">${yeFade([[riftOpen[0], 0], [riftOpen[0] + 1.8, 1], [riftClose[0] + 0.4, 1], [riftClose[1], 0]])}<g transform="scale(1 0.82)">${yeRift()}</g></g></g></g>`
+
+  // the Enterprise-C: out of the rift, holds, turns about, and back in
+  const hold = `${66 * Q} ${13 * Q}`
+  const shipMove = yeAnim('transform', [[shipOut[0], `${rx} ${ry}`], [shipOut[1], hold], [turn[0], hold], [turn[1], `${65 * Q} ${13 * Q}`], [goBack[1], `${rx} ${ry}`]], 'animateTransform', 'type="translate" ')
+  const shipScale = yeAnim('transform', [[shipOut[0], '0.15'], [shipOut[1], '1'], [goBack[0], '1'], [goBack[1], '0.15']], 'animateTransform', 'type="scale" ')
+  // turning about: the hull narrows to edge-on and opens out facing the other way
+  const shipFlip = yeAnim('transform', [[turn[0], '1 1'], [turn[1], '-1 1'], [14.6, '-1 1'], [15.0, '1 1']], 'animateTransform', 'type="scale" ')
+  // mid-turn she shows her bow: the side view hands over to a bow-on sprite and back
+  const tm = (turn[0] + turn[1]) / 2
+  const sideFade = yeFade([[tm - 0.38, 1], [tm - 0.12, 0], [tm + 0.12, 0], [tm + 0.38, 1]])
+  const frontFade = yeFade([[tm - 0.4, 0], [tm - 0.14, 1], [tm + 0.14, 1], [tm + 0.4, 0]])
+  // a slow drift up and down while she holds station
+  const bob = yeAnim('transform', [[shipOut[1], '0 0'], [8.6, '0 -1'], [10.0, '0 1'], [turn[0], '0 0']], 'animateTransform', 'type="translate" ')
+  scr += `<g opacity="0">${yeFade([[shipOut[0], 0], [shipOut[0] + 0.9, 1], [goBack[1] - 0.8, 1], [goBack[1], 0]])}<g>${shipMove}<g>${bob}<g>${shipScale}<g>${sideFade}<g>${shipFlip}<g transform="translate(${-15 * Q} ${-4.5 * Q})">${yeShipC()}</g></g></g><g opacity="0">${frontFade}${yeShipFront()}</g></g></g></g></g>`
+
+  scr += `<rect x="${YE_SX * Q}" y="${YE_SY * Q}" width="${YE_SW * Q}" height="${YE_SH * Q}" fill="url(#yeScan)"/>`
+  scr += `<polygon points="${30 * Q},${2 * Q} ${36 * Q},${2 * Q} ${30 * Q},${8 * Q}" fill="#ffffff" opacity="0.05"/>`
+  s += `<g clip-path="url(#yeScreen)">${scr}</g>`
+
+  // ---- Tasha Yar at tactical: only there while history is wrong
+  const tx = 8
+  const ty = 25
+  const hair = '#d9c07a'
+  const hairHi = '#f2e2a8'
+  const hairSh = '#ad8f45'
+  const tashaDetails = (p: Pix) => {
+    // short, cropped blonde hair: a low cap with a ragged fringe
+    p.rect(tx + 3, ty - 2, 12, 1, hair).rect(tx + 1, ty - 1, 16, 1, hair).rect(tx, ty, 18, 1, hair)
+    ;[5, 9, 12].forEach(c => p.set(tx + c, ty - 2, hairHi))
+    p.set(tx + 3, ty - 1, hairHi).set(tx + 7, ty - 1, hairHi).set(tx + 14, ty - 1, hairHi)
+    ;[2, 5, 8, 11, 14].forEach(c => p.set(tx + c, ty, hairSh))
+    p.rect(tx, ty + 1, 2, 1, hair).set(tx + 3, ty + 1, hair).set(tx + 15, ty + 1, hair).rect(tx + 16, ty + 1, 2, 1, hair)
+    p.set(tx, ty + 2, hairSh).set(tx + 17, ty + 2, hairSh)
+    // security gold, combadge, two pips
+    p.rect(tx, ty + 7, 18, 1, YE_TASHA.lower!).set(tx, ty + 7, YE_TASHA.lowerShade!)
+    p.rect(tx + 12, ty + 7, 2, 2, '#e8c547').set(tx + 12, ty + 7, '#fff3b0')
+    p.set(tx + 2, ty + 6, '#e8c547').set(tx + 4, ty + 6, '#e8c547')
+  }
+  let tasha = crabHD(YE_TASHA, tx, ty, 'right', T, { left: [], right: [] }, [], T / 4, tashaDetails)
+  // her nod: eyes dip down one pixel and come back
+  const nodEyes = new Pix()
+  for (let c = 6; c <= 13; c++) nodEyes.rect(tx + c, ty + 2, 1, 4, YE_TASHA.skin)
+  nodEyes.rect(tx + 6, ty + 3, 2, 3, EYE_HD).rect(tx + 12, ty + 3, 2, 3, EYE_HD)
+  tasha += shown(nodEyes.svg(), [nod], T)
+  s += `<g opacity="0">${tasha}${yeFade([[tashaIn[0], 0], [tashaIn[1], 1], [grimOut[0], 1], [grimOut[1] - 0.3, 0]])}</g>`
+
+  // the tactical console in front of her
+  const con = new Pix()
+  con.rect(4, 35, 29, 1, '#9a8fa6').rect(3, 36, 31, 1, '#0b0910').rect(4, 35, 1, 1, '#5b5266')
+  con.rect(5, 36, 4, 1, '#f29a3a').rect(10, 36, 3, 1, '#8aa7e8').rect(14, 36, 5, 1, '#c39be0').rect(20, 36, 3, 1, '#f7c487').rect(28, 36, 2, 1, '#c0201c')
+  // kept short (ends at row 40) so the floor under the title stays plain
+  con.rect(3, 37, 31, 4, '#4a3020').rect(3, 37, 31, 1, '#7a5236').rect(3, 40, 31, 1, '#2e1e14')
+  for (const x of [10, 18, 26]) con.rect(x, 38, 1, 2, '#33221a')
+  s += `<g mask="url(#yeFadeC)">${con.svg()}</g>`
+
+  // ---- Picard before the screen
+  const px = 56
+  const py = 28
+  const fringe = '#9b928c'
+  const picardDetails = (p: Pix) => {
+    p.rect(px, py + 2, 1, 3, fringe).rect(px + 1, py + 3, 1, 2, fringe).rect(px + 17, py + 2, 1, 3, fringe).rect(px + 16, py + 3, 1, 2, fringe)
+    p.set(px, py + 2, '#bdb5ae').set(px + 17, py + 2, '#bdb5ae')
+    p.rect(px + 12, py + 7, 2, 2, '#e8c547').set(px + 12, py + 7, '#fff3b0')
+    for (const c of [1, 3, 5, 7]) p.set(px + c, py + 6, '#e8c547')
+  }
+  s += crabHD(YE_PICARD, px, py, 'right', T, { left: [], right: [clawRaise] }, [], T / 4, picardDetails)
+  // his eyes on Tasha: a glance across with an in-between step each way
+  const eyesAt = (e: number[]) => {
+    const p = new Pix()
+    for (let c = 4; c <= 13; c++) p.rect(px + c, py + 2, 1, 3, YE_PICARD.skin)
+    e.forEach(c => p.rect(px + c, py + 2, 2, 3, EYE_HD))
+    return p.svg()
+  }
+  const [g0, g1] = lookAtTasha
+  s += shown(eyesAt([5, 11]), [[g0, g0 + 0.09], [g1 - 0.09, g1]], T)
+  s += shown(eyesAt([4, 10]), [[g0 + 0.09, g1 - 0.09]], T)
+
+  return s
+}
+
+// ---------- The Measure of a Man: "Does Data have a soul?" ----------
+// The hearing room on Starbase 173. Captain Louvois (JAG) at the raised bench under
+// the Federation emblem, Data seated in the witness chair, Picard (Clawd) at the defence chair.
+// One 17.17 s story, played once:
+//  0.0 - 2.0  calm: everyone seated, Louvois looks out over the room
+//  2.0 - 4.4  Picard rises and walks out to the middle of the floor
+//  4.4 - 8.6  he makes his case: points a claw at Data, paces, looks up at the
+//             bench, then both claws up ("there it sits!")
+//  8.6 - 10.8 the ruling: Louvois raises her gavel and taps it twice
+// 10.8 - 14.8 Data stands, free, walks over; he and Picard shake claws
+// 14.8 - 17.17 each goes back and sits down again: the opening shot
+
+const MM_T = SCENE_SECONDS
+
+const MM_PICARD: CrabHD = {
+  skin: '#d97757',
+  light: '#eb9575',
+  shade: '#b85f43',
+  upper: '#1c1424',
+  lower: '#b3262e',
+  lowerShade: '#8e1d24',
+  legs: '#1c1424',
+  rim: '#f6a77c',
+}
+
+// Data: pale gold skin, operations gold uniform
+const MM_DATA: CrabHD = {
+  skin: '#e9dfbf',
+  light: '#f7f0d8',
+  shade: '#bfb38c',
+  upper: '#1c1424',
+  lower: '#c99a22',
+  lowerShade: '#9a7414',
+  legs: '#1c1424',
+  rim: '#fff6dc',
+}
+
+// Captain Phillipa Louvois
+const MM_LOU: CrabHD = {
+  skin: '#dc9a7a',
+  light: '#eeb496',
+  shade: '#b0765a',
+  upper: '#1c1424',
+  lower: '#b3262e',
+  lowerShade: '#8e1d24',
+  legs: '#1c1424',
+  rim: '#f4c0a2',
+}
+
+type MmGaze = 'l' | 'r' | 'c' | 'ul' | 'ur' | 'd' | 'dl'
+// an arm move: held between t0 and t1, reached through its in-between sprites
+type MmArm = 'point' | 'up' | 'reach'
+
+const MM_EASE = '0.4 0 0.2 1'
+const MM_STEP = 0.09 // one in-between frame of an arm move
+
+const mmKt = (ts: number[]) => ts.map(t => +(t / MM_T).toFixed(5)).join(';')
+
+// a smooth eased move on the story timeline: [t, x, y] in art px; held flat between keys
+function mmTrack(pts: [number, number, number][], spline = MM_EASE) {
+  const list = [...pts]
+  if (list[0][0] > 0) list.unshift([0, list[0][1], list[0][2]])
+  const last = list[list.length - 1]
+  if (last[0] < MM_T) list.push([MM_T, last[1], last[2]])
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${MM_T}s" repeatCount="indefinite" values="${list.map(p => `${+(p[1] * Q).toFixed(2)} ${+(p[2] * Q).toFixed(2)}`).join(';')}" keyTimes="${mmKt(list.map(p => p[0]))}" keySplines="${list.slice(1).map(() => spline).join(';')}"/>`
+}
+
+// a gentle up-and-down on every step of a walk (amp in art px, phase 0 or 0.5 of a step)
+function mmBob(walks: [number, number, number][], amp: number, phase: number) {
+  const pts: [number, number, number][] = [[0, 0, 0]]
+  for (const [a, b, step] of walks) {
+    for (let t = a + phase * step; t + step <= b + 0.001; t += step) {
+      pts.push([+t.toFixed(3), 0, 0], [+(t + step / 2).toFixed(3), 0, -amp], [+(t + step).toFixed(3), 0, 0])
+    }
+  }
+  return mmTrack(pts, '0.45 0 0.55 1')
+}
+
+function mmInter(a: [number, number][], b: [number, number][]) {
+  const out: [number, number][] = []
+  for (const [a0, a1] of a) for (const [b0, b1] of b) {
+    const lo = Math.max(a0, b0)
+    const hi = Math.min(a1, b1)
+    if (hi > lo) out.push([lo, hi])
+  }
+  return out
+}
+
+// claw a little way out and up: the first in-between from rest
+function mmArmLow(k: CrabHD, x: number, y: number, side: Side) {
+  const p = new Pix()
+  const r = side === 'right'
+  const sx = r ? x + 18 : x - 3
+  p.rect(sx, y + 4, 3, 2, k.skin).rect(sx, y + 6, 3, 1, k.shade)
+  const ax = r ? x + 21 : x - 5
+  p.rect(ax, y + 2, 2, 3, k.skin)
+  const cx = r ? x + 21 : x - 6
+  p.rect(cx, y, 1, 2, k.skin).rect(cx + 3, y, 1, 2, k.skin).rect(cx, y + 1, 4, 1, k.skin)
+  p.set(cx, y, k.light).set(cx + 3, y, k.light)
+  return p.svg()
+}
+
+// arm half out to the side: the in-between of the handshake
+function mmArmOut(k: CrabHD, x: number, y: number, side: Side) {
+  const p = new Pix()
+  const r = side === 'right'
+  const base = r ? x + 18 : x - 3
+  p.rect(base, y + 4, 3, 2, k.skin).rect(base, y + 6, 3, 1, k.shade)
+  const cx = r ? x + 21 : x - 4
+  p.set(cx, y + 3, k.light).set(cx, y + 6, k.skin).rect(cx, y + 4, 1, 2, k.skin)
+  return p.svg()
+}
+
+// arm straight out to the side, claw open: for the handshake
+function mmArmReach(k: CrabHD, x: number, y: number, side: Side) {
+  const p = new Pix()
+  const s = side === 'right' ? 1 : -1
+  const base = side === 'right' ? x + 18 : x - 1
+  for (let i = 0; i < 4; i++) {
+    p.set(base + s * i, y + 4, k.skin).set(base + s * i, y + 5, k.skin).set(base + s * i, y + 6, k.shade)
+  }
+  const cx = base + s * 4
+  p.rect(Math.min(cx, cx + s), y + 3, 2, 1, k.skin).set(cx + s, y + 3, k.light)
+  p.set(cx, y + 4, k.skin).set(cx, y + 5, k.skin)
+  p.rect(Math.min(cx, cx + s), y + 6, 2, 1, k.skin).set(cx + s, y + 6, k.shade)
+  return p.svg()
+}
+
+// each move's sprites in order out from rest: [in-betweens..., held pose]
+function mmChain(k: CrabHD, x: number, y: number, side: Side, pose: MmArm) {
+  if (pose === 'reach') return [mmArmOut(k, x, y, side), mmArmReach(k, x, y, side)]
+  if (pose === 'point') return [mmArmLow(k, x, y, side), armMidHD(k, x, y, side)]
+  return [mmArmLow(k, x, y, side), armMidHD(k, x, y, side), armUpHD(k, x, y, side)]
+}
+
+// show a chain of sprites on the way out of rest, hold the last, and come back the same way
+function mmMove(chain: string[], w: [number, number][]) {
+  const per: [number, number][][] = chain.map(() => [])
+  for (const [a, b] of w) {
+    const n = chain.length
+    const st = Math.min(MM_STEP, (b - a) / (2 * n))
+    for (let i = 0; i < n - 1; i++) {
+      per[i].push([a + i * st, a + (i + 1) * st], [b - (i + 1) * st, b - i * st])
+    }
+    per[n - 1].push([a + (n - 1) * st, b - (n - 1) * st])
+  }
+  return chain.map((c, i) => shown(c, per[i], MM_T)).join('')
+}
+
+// Clawd's body with no eyes and no legs (those go on the timeline)
+function mmBody(k: CrabHD, x: number, y: number, rimSide: Side) {
+  const p = new Pix()
+  for (let j = 0; j < 10; j++) {
+    const inset = j === 0 || j === 9 ? 1 : 0
+    let c = j === 0 ? k.light : k.skin
+    if (j >= 6) c = j < 8 ? k.upper! : k.lower!
+    p.rect(x + inset, y + j, 18 - 2 * inset, 1, c)
+  }
+  const far = rimSide === 'right' ? x : x + 17
+  const near = rimSide === 'right' ? x + 17 : x
+  p.rect(far, y + 1, 1, 5, k.shade)
+  p.rect(near, y + 1, 1, 5, k.rim)
+  p.set(far, y + 8, k.lowerShade!)
+  return p
+}
+
+type MmChar = {
+  k: CrabHD
+  x: number
+  y: number
+  rim: Side
+  slide: [number, number, number][] // [t, x, 0]: across the floor
+  lift: [number, number, number][] // [t, 0, y]: seated (2) or standing (0), hops (-1)
+  walks: [number, number, number][] // [start, end, step seconds]
+  gaze: [number, number, MmGaze][]
+  blinks: [number, number][]
+  arms: { left: [number, number, MmArm][]; right: [number, number, MmArm][] }
+  details: (p: Pix) => void
+  eye?: (p: Pix, ex: number, ey: number, g: MmGaze) => void
+}
+
+const mmEyeX = (g: MmGaze) => (g === 'l' || g === 'ul' || g === 'dl' ? [4, 10] : g === 'r' || g === 'ur' ? [6, 12] : [5, 11])
+const mmEyeY = (g: MmGaze) => (g === 'ul' || g === 'ur' ? 1 : g === 'd' || g === 'dl' ? 3 : 2)
+
+function mmChar(o: MmChar) {
+  const { k, x, y } = o
+  // shadow and legs stay on the floor; the body slides down over the legs to sit
+  let floor = `<ellipse cx="${(x + 9) * Q}" cy="${42 * Q}" rx="18" ry="2" fill="#0c0e16" opacity="0.6"/>`
+  for (const [pair, phase] of [[[1, 11], 0], [[5, 15], 0.5]] as [number[], number][]) {
+    const lp = new Pix()
+    for (const lx of pair) lp.rect(x + lx, y + 10, 2, 4, k.legs).set(x + lx + 1, y + 10, '#2c2236')
+    floor += `<g>${lp.svg()}${mmBob(o.walks, 0.75, phase)}</g>`
+  }
+  const body = mmBody(k, x, y, o.rim)
+  o.details(body)
+  let s = body.svg()
+  // arms
+  for (const side of ['left', 'right'] as Side[]) {
+    const list = o.arms[side]
+    const busy = merge(list.map(a => [a[0], a[1]] as [number, number]))
+    s += shown(armRestHD(k, x, y, side), complement(busy, MM_T), MM_T)
+    for (const pose of ['point', 'up', 'reach'] as MmArm[]) {
+      const w = list.filter(a => a[2] === pose).map(a => [a[0], a[1]] as [number, number])
+      if (w.length) s += mmMove(mmChain(k, x, y, side, pose), w)
+    }
+  }
+  // eyes: one sprite per gaze, closed during blinks
+  const open = complement(merge(o.blinks), MM_T)
+  const byGaze = new Map<MmGaze, [number, number][]>()
+  for (const [a, b, g] of o.gaze) {
+    if (!byGaze.has(g)) byGaze.set(g, [])
+    byGaze.get(g)!.push([a, b])
+  }
+  for (const [g, w] of byGaze) {
+    const e = new Pix()
+    for (const ex of mmEyeX(g)) {
+      if (o.eye) o.eye(e, x + ex, y + mmEyeY(g), g)
+      else e.rect(x + ex, y + mmEyeY(g), 2, 3, EYE_HD)
+    }
+    s += shown(e.svg(), mmInter(merge(w), open), MM_T)
+    const shut = new Pix()
+    for (const ex of mmEyeX(g)) shut.rect(x + ex, y + 4, 2, 1, o.eye ? '#6a5a2a' : EYE_HD)
+    const bw = mmInter(merge(w), merge(o.blinks))
+    if (bw.length) s += shown(shut.svg(), bw, MM_T)
+  }
+  const bodyG = `<g><g>${s}${mmBob(o.walks, 0.5, 0.25)}</g>${mmTrack(o.lift)}</g>`
+  return `<g>${floor}${bodyG}${mmTrack(o.slide)}</g>`
+}
+
+function measureOfAMan() {
+  const T = MM_T
+  const W = GW * Q
+  const H = GH * Q
+  let seed = 173
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
+  let s = `<defs>
+    <linearGradient id="mmFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="mmFade"><rect width="${W}" height="${H}" fill="url(#mmFadeG)"/></mask>
+    <radialGradient id="mmPool"><stop offset="0" stop-color="#cfd8ff" stop-opacity="0.16"/><stop offset="1" stop-color="#cfd8ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="mmLamp"><stop offset="0" stop-color="#e8eeff" stop-opacity="0.3"/><stop offset="1" stop-color="#e8eeff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="mmBlue"><stop offset="0" stop-color="#5a8ae0" stop-opacity="0.3"/><stop offset="1" stop-color="#5a8ae0" stop-opacity="0"/></radialGradient>
+    <linearGradient id="mmShadeG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#10131e" stop-opacity="0"/><stop offset="1" stop-color="#10131e" stop-opacity="0.5"/></linearGradient>
+  </defs>`
+
+  // ---- the room: Starfleet grey-blue panelling, faded in from the left ----
+  // big plain areas as single rects, details as pixels on top
+  let base = ''
+  const vr = (x: number, y: number, w: number, h: number, c: string) =>
+    (base += `<rect x="${x * Q}" y="${y * Q}" width="${w * Q}" height="${h * Q}" fill="${c}"/>`)
+  const room = new Pix()
+  // ceiling and a long light strip
+  vr(0, 0, GW, 3, '#12151f')
+  vr(0, 1, GW, 1, '#3c4560')
+  vr(0, 2, GW, 1, '#1c2130')
+  for (let c = 2; c < GW; c += 8) room.rect(c, 1, 5, 1, '#8e9ac0').set(c + 2, 1, '#c8d2f0')
+  // wall with faint panel seams
+  vr(0, 3, GW, 19, '#262c3e')
+  for (let r = 6; r < 22; r += 5) vr(0, r, GW, 1, '#2b3246')
+  // wainscot and rail
+  vr(0, 22, GW, 7, '#2f3549')
+  vr(0, 22, GW, 1, '#58628a')
+  vr(0, 23, GW, 1, '#3a4260')
+  for (let c = 3; c < GW; c += 6) vr(c, 24, 1, 5, '#283044')
+  // pilasters
+  for (const px of [18, 37, 64, 88]) {
+    vr(px, 3, 2, 26, '#363e58')
+    vr(px, 3, 1, 26, '#4a5476')
+    vr(px - 1, 3, 4, 1, '#4a5476')
+    vr(px - 1, 21, 4, 1, '#4a5476')
+  }
+  // two tall viewports onto space
+  const mull: [number, number, number][] = []
+  const win = (x0: number, x1: number, y0: number, y1: number) => {
+    vr(x0 - 1, y0 - 1, x1 - x0 + 3, y1 - y0 + 3, '#4a5476')
+    vr(x0 - 1, y1 + 1, x1 - x0 + 3, 1, '#5e6a94')
+    vr(x0, y0, x1 - x0 + 1, y1 - y0 + 1, '#080a16')
+    vr(x0, y0, x1 - x0 + 1, 1, '#0e1226')
+    for (let i = 0; i < (x1 - x0) * (y1 - y0) / 12; i++) {
+      const sx = x0 + Math.floor(rnd() * (x1 - x0 + 1))
+      const sy = y0 + 1 + Math.floor(rnd() * (y1 - y0))
+      room.set(sx, sy, rnd() < 0.5 ? '#3c4468' : '#6a7298')
+    }
+    mull.push([Math.floor((x0 + x1) / 2), y0, y1 - y0 + 1])
+  }
+  win(22, 34, 5, 17)
+  win(68, 85, 5, 17)
+  // a planet's limb in the right viewport
+  for (let yy = 5; yy <= 17; yy++) {
+    for (let xx = 68; xx <= 85; xx++) {
+      const d = Math.hypot(xx - 90, yy - 22)
+      if (d < 11) room.set(xx, yy, d > 10 ? '#7aa8e0' : d > 9 ? '#3e6aa8' : '#2a4678')
+    }
+  }
+  for (const [x, y, h] of mull) room.rect(x, y, 1, h, '#3a4262')
+  // a small LCARS panel on the left wall
+  room.rect(3, 8, 11, 8, '#11141e').rect(4, 9, 3, 2, '#e09a4a').rect(8, 9, 5, 1, '#9a8ad0').rect(8, 11, 4, 1, '#c86a5a')
+  room.rect(4, 12, 3, 3, '#9a8ad0').rect(8, 13, 5, 1, '#e0b05a').rect(8, 14, 3, 1, '#6a7ab0')
+  // the floor: dark carpet with seams
+  vr(0, 29, GW, 19, '#1c2131')
+  vr(0, 29, GW, 1, '#141824')
+  for (let r = 31; r < 48; r += 3) vr(0, r, GW, 1, '#20263a')
+  for (let i = 0; i < 18; i++) room.set(Math.floor(rnd() * GW), 30 + Math.floor(rnd() * 18), rnd() < 0.5 ? '#232a3f' : '#171b28')
+  // the defence table (mostly in the faded edge): PADDs and a glass of water
+  room.rect(1, 33, 19, 1, '#6a7290').rect(1, 34, 19, 1, '#4a5270').rect(2, 35, 17, 5, '#2a3045')
+  room.rect(2, 35, 17, 1, '#363e58').rect(3, 40, 2, 2, '#2a3045').rect(16, 40, 2, 2, '#2a3045')
+  room.rect(9, 32, 4, 1, '#8a96b8').set(10, 32, '#c0ccec').rect(14, 31, 1, 2, '#9ab8d8').set(14, 31, '#d8ecff')
+  s += `<g mask="url(#mmFade)">${base}${room.svg()}`
+  // stars in the viewports, a few twinkling slowly
+  ;[[25, 8], [31, 13], [71, 7], [80, 9], [27, 15]].forEach(([x, y], i) => {
+    s += `<g>${new Pix().set(x, y, '#e8ecff').svg()}<animate attributeName="opacity" values="0.35;0.9;0.35" dur="${+(T / [5, 4, 3, 5, 4][i]).toFixed(4)}s" begin="-${(i * 0.7).toFixed(1)}s" repeatCount="indefinite"/></g>`
+  })
+  // LCARS lights breathing gently
+  s += `<g>${new Pix().rect(4, 9, 3, 2, '#ffc070').svg()}<animate attributeName="opacity" values="0.2;0.7;0.2" dur="${+(T / 4).toFixed(4)}s" repeatCount="indefinite"/></g>`
+  s += `</g>`
+  s += `<ellipse cx="${78 * Q}" cy="${18 * Q}" rx="26" ry="16" fill="url(#mmBlue)"/>`
+
+  // ---- the Federation banner behind the bench ----
+  const ban = new Pix()
+  ban.rect(45, 3, 11, 9, '#1c2a5a').rect(45, 3, 11, 1, '#2a3a74').rect(45, 3, 1, 9, '#2a3a74').rect(55, 3, 1, 9, '#141e44')
+  ban.rect(44, 2, 13, 1, '#8a96b8')
+  // the UFP emblem: a blue disc of stars inside a wreath of laurels
+  ban.rect(49, 5, 3, 1, '#2f4c9a').rect(48, 6, 5, 3, '#2f4c9a').rect(49, 9, 3, 1, '#2f4c9a')
+  ban.set(50, 6, '#f2f4ff').set(49, 8, '#f2f4ff').set(51, 8, '#f2f4ff').set(50, 7, '#9aaee8').set(48, 7, '#3e5cb0')
+  const leaf = [[-3, -2], [-4, -1], [-4, 0], [-4, 1], [-3, 2], [-2, 3]]
+  leaf.forEach(([dx, dy], i) => {
+    const c = i % 2 ? '#9aa4c8' : '#d8def0'
+    ban.set(50 + dx, 7 + dy, c).set(50 - dx, 7 + dy, c)
+  })
+  ban.rect(44, 12, 13, 1, '#8a96b8')
+  s += ban.svg()
+
+  // soft light pooled on the bench and the floor
+  s += `<ellipse cx="${51 * Q}" cy="${10 * Q}" rx="34" ry="18" fill="url(#mmLamp)"/>`
+  s += `<ellipse cx="${50 * Q}" cy="${38 * Q}" rx="70" ry="14" fill="url(#mmPool)"/>`
+
+  // ---- the two chairs ----
+  const chair = (cx: number) => {
+    const p = new Pix()
+    p.rect(cx + 2, 24, 14, 14, '#4a4462').rect(cx + 3, 23, 12, 1, '#7a7098').rect(cx + 2, 24, 14, 1, '#6a6288').rect(cx + 2, 24, 1, 14, '#5e5880').rect(cx + 15, 24, 1, 14, '#2e2a40')
+    p.rect(cx + 4, 26, 10, 10, '#55507a')
+    p.rect(cx + 1, 37, 16, 2, '#4a4260').rect(cx + 1, 37, 16, 1, '#6a6084')
+    p.rect(cx + 8, 39, 2, 2, '#2a2436').rect(cx + 5, 41, 8, 1, '#2a2436')
+    return p.svg()
+  }
+  const PX = 24
+  const DX = 67
+  s += chair(PX) + chair(DX)
+
+  // ---- Captain Louvois at the bench ----
+  const LX = 42
+  const LY = 11
+  const lou = new Pix()
+  for (let j = 0; j < 9; j++) {
+    const inset = j === 0 ? 1 : 0
+    let c = j === 0 ? MM_LOU.light : MM_LOU.skin
+    if (j === 6) c = MM_LOU.upper!
+    if (j >= 7) c = MM_LOU.lower!
+    lou.rect(LX + inset, LY + j, 18 - 2 * inset, 1, c)
+  }
+  lou.rect(LX, LY + 1, 1, 5, MM_LOU.shade).rect(LX + 17, LY + 1, 1, 5, MM_LOU.shade)
+  // auburn hair: a soft bob framing the face
+  lou.rect(LX + 1, LY - 1, 16, 1, '#7a3a22').rect(LX + 4, LY - 1, 6, 1, '#a0522e')
+  lou.rect(LX, LY, 18, 1, '#6a321e').rect(LX + 3, LY, 5, 1, '#8e4a2a')
+  lou.rect(LX - 1, LY + 1, 3, 5, '#6a321e').rect(LX + 16, LY + 1, 3, 5, '#5a2a1a').set(LX - 1, LY + 1, '#8e4a2a')
+  lou.set(LX + 2, LY + 1, '#6a321e').set(LX + 15, LY + 1, '#5a2a1a')
+  lou.set(LX + 13, LY + 7, '#e8c547').set(LX + 14, LY + 7, '#e8c547')
+  // a slight smile
+  lou.rect(LX + 8, LY + 5, 2, 1, MM_LOU.shade)
+  s += lou.svg()
+  const louEyes = (g: MmGaze) => {
+    const e = new Pix()
+    for (const ex of mmEyeX(g)) e.rect(LX + ex, LY + mmEyeY(g), 2, 2, EYE_HD).set(LX + ex, LY + mmEyeY(g), '#3a2a2a')
+    return e.svg()
+  }
+  const louShut = new Pix().rect(LX + 5, LY + 3, 2, 1, EYE_HD).rect(LX + 11, LY + 3, 2, 1, EYE_HD).svg()
+  const louGaze: [number, number, MmGaze][] = [[0, 4.4, 'c'], [4.4, 8.6, 'dl'], [8.6, 12.8, 'c'], [12.8, 14.8, 'd'], [14.8, T, 'c']]
+  const louBlinks: [number, number][] = [[2.6, 2.75], [7.6, 7.75], [11.9, 12.05], [15.8, 15.95]]
+  const louOpen = complement(louBlinks, T)
+  for (const g of ['c', 'dl', 'd'] as MmGaze[]) {
+    const w = louGaze.filter(z => z[2] === g).map(z => [z[0], z[1]] as [number, number])
+    s += shown(louEyes(g), mmInter(w, louOpen), T)
+  }
+  s += shown(louShut, louBlinks, T)
+
+  // the bench
+  const bench = new Pix()
+  bench.rect(36, 19, 30, 1, '#a8b0cc').rect(36, 20, 30, 1, '#6e7898')
+  bench.rect(37, 21, 28, 6, '#363e58').rect(37, 21, 1, 6, '#4a5476').rect(64, 21, 1, 6, '#262c40')
+  for (const bx of [44, 57]) bench.rect(bx, 21, 1, 6, '#2a3046')
+  bench.rect(38, 22, 5, 1, '#e09a4a').rect(59, 22, 5, 1, '#9a8ad0')
+  // the emblem plate on the front
+  bench.rect(48, 22, 5, 4, '#1c2a5a').rect(48, 22, 5, 1, '#c9a840').rect(48, 25, 5, 1, '#8a7430')
+  bench.set(50, 23, '#f2f4ff').set(49, 24, '#c8d0e8').set(51, 24, '#c8d0e8')
+  bench.rect(35, 27, 32, 2, '#262c3e').rect(35, 27, 32, 1, '#4a5476')
+  // the sound block and a stack of PADDs
+  bench.rect(62, 18, 4, 1, '#6a4a2a').set(62, 18, '#9a6a3a')
+  bench.rect(38, 18, 4, 1, '#8a96b8').set(39, 18, '#c0ccec')
+  s += bench.svg()
+
+  // her claws on the bench: the left at rest, the right with the gavel
+  s += new Pix().rect(LX - 3, LY + 6, 3, 2, MM_LOU.skin).set(LX - 3, LY + 6, MM_LOU.light).svg()
+  const gavelRest = new Pix()
+  gavelRest.rect(LX + 18, LY + 5, 2, 2, MM_LOU.skin).set(LX + 19, LY + 5, MM_LOU.light)
+  gavelRest.rect(LX + 20, LY + 5, 2, 1, '#9a6a3a')
+  gavelRest.rect(LX + 21, LY + 4, 2, 3, '#5a3a22').set(LX + 21, LY + 4, '#8a5a32').set(LX + 22, LY + 6, '#3a2414')
+  const gavelUp = new Pix()
+  gavelUp.rect(LX + 18, LY + 5, 2, 2, MM_LOU.skin)
+  gavelUp.rect(LX + 19, LY + 1, 2, 4, MM_LOU.skin).set(LX + 20, LY + 1, MM_LOU.shade).set(LX + 20, LY + 2, MM_LOU.shade)
+  gavelUp.rect(LX + 19, LY, 2, 1, MM_LOU.light)
+  gavelUp.rect(LX + 21, LY, 2, 1, '#9a6a3a')
+  gavelUp.rect(LX + 22, LY - 2, 2, 3, '#5a3a22').set(LX + 22, LY - 2, '#8a5a32').set(LX + 23, LY, '#3a2414')
+  // half-way up: the claw lifted, the gavel tilted
+  const gavelMid = new Pix()
+  gavelMid.rect(LX + 18, LY + 5, 2, 2, MM_LOU.skin)
+  gavelMid.rect(LX + 19, LY + 3, 2, 2, MM_LOU.skin).set(LX + 20, LY + 3, MM_LOU.light)
+  gavelMid.rect(LX + 21, LY + 3, 1, 1, '#9a6a3a')
+  gavelMid.rect(LX + 22, LY + 1, 2, 3, '#5a3a22').set(LX + 22, LY + 1, '#8a5a32').set(LX + 23, LY + 3, '#3a2414')
+  const ups: [number, number][] = [[8.9, 9.45], [9.65, 10.2]]
+  s += mmMove([gavelMid.svg(), gavelUp.svg()], ups)
+  s += shown(gavelRest.svg(), complement(ups, T), T)
+  // two small soft marks where the gavel lands
+  const tap = new Pix().set(LX + 20, LY + 3, '#b8c0d8').set(LX + 24, LY + 3, '#b8c0d8').set(LX + 19, LY + 4, '#8a92b0').set(LX + 25, LY + 4, '#8a92b0')
+  {
+    const ts = [0, 9.45, 9.52, 9.85, 10.2, 10.27, 10.6, T]
+    const vs = [0, 0, 0.85, 0, 0, 0.85, 0, 0]
+    s += `<g opacity="0">${tap.svg()}<animate attributeName="opacity" dur="${T}s" repeatCount="indefinite" values="${vs.join(';')}" keyTimes="${mmKt(ts)}"/></g>`
+  }
+
+  // ---- Picard: rises, crosses the floor, argues, shakes Data's claw, goes back ----
+  s += mmChar({
+    k: MM_PICARD,
+    x: PX,
+    y: 28,
+    rim: 'right',
+    slide: [[2.4, 0, 0], [4.4, 10, 0], [6.1, 10, 0], [6.7, 8, 0], [6.9, 8, 0], [7.5, 10, 0], [14.9, 10, 0], [16.4, 0, 0]],
+    lift: [[2.0, 0, 2], [2.45, 0, 0], [13.65, 0, 0], [13.85, 0, -1], [14.05, 0, 0], [16.4, 0, 0], [16.85, 0, 2]],
+    walks: [[2.4, 4.4, 0.4], [6.1, 6.7, 0.3], [6.9, 7.5, 0.3], [14.9, 16.4, 0.3]],
+    gaze: [[0, 4.6, 'r'], [4.6, 6.0, 'ur'], [6.0, 6.1, 'c'], [6.1, 6.9, 'l'], [6.9, 7.0, 'c'], [7.0, 10.8, 'ur'], [10.8, 14.8, 'r'], [14.8, 14.9, 'c'], [14.9, 16.4, 'l'], [16.4, 16.5, 'c'], [16.5, T, 'r']],
+    blinks: [[1.2, 1.35], [5.4, 5.55], [10.3, 10.45], [12.4, 12.55]],
+    arms: {
+      left: [[7.2, 8.6, 'up']],
+      right: [[4.6, 6.0, 'point'], [7.2, 8.6, 'up'], [12.8, 14.8, 'reach']],
+    },
+    details: p => {
+      // grey fringe at the temples, a shine on the crown
+      p.rect(PX, 30, 1, 3, '#a8a4a0').set(PX + 1, 31, '#8e8a86').rect(PX + 17, 30, 1, 3, '#c4c0ba').set(PX + 16, 31, '#a8a4a0')
+      p.rect(PX + 5, 28, 3, 1, '#f6b090')
+      // combadge and collar pips
+      p.rect(PX + 12, 34, 2, 2, '#e8c547').set(PX + 12, 34, '#fff3b0')
+      for (const c of [3, 5, 7]) p.set(PX + c, 34, '#e8c547')
+    },
+  })
+
+  // ---- Data: waits in the witness chair, stands free, comes to shake Picard's claw ----
+  s += mmChar({
+    k: MM_DATA,
+    x: DX,
+    y: 28,
+    rim: 'left',
+    slide: [[11.4, 0, 0], [12.7, -5, 0], [15.0, -5, 0], [16.1, 0, 0]],
+    lift: [[11.0, 0, 2], [11.45, 0, 0], [16.1, 0, 0], [16.55, 0, 2]],
+    walks: [[11.4, 12.7, 0.325], [15.0, 16.1, 0.275]],
+    gaze: [[0, 2.0, 'c'], [2.0, 8.6, 'l'], [8.6, 10.8, 'ul'], [10.8, 14.8, 'l'], [14.8, 14.9, 'c'], [14.9, 16.3, 'r'], [16.3, T, 'c']],
+    blinks: [[3.6, 3.72], [9.9, 10.02], [15.5, 15.62]],
+    arms: { left: [[12.8, 14.8, 'reach']], right: [] },
+    eye: (p, ex, ey, g) => {
+      p.rect(ex, ey, 2, 3, '#e8b818').set(ex, ey, '#f6d84a').set(ex + 1, ey, '#f6d84a')
+      const px = g === 'l' || g === 'ul' || g === 'dl' ? ex : g === 'r' || g === 'ur' ? ex + 1 : ex === DX + 5 ? ex + 1 : ex
+      p.rect(px, ey + 1, 1, 2, '#3a2a08')
+    },
+    details: p => {
+      // black hair slicked back, a widow's peak
+      p.rect(DX + 1, 27, 16, 1, '#141018').rect(DX + 5, 27, 6, 1, '#2e2a3a')
+      p.rect(DX, 28, 18, 1, '#141018').rect(DX + 3, 28, 4, 1, '#3a3448').rect(DX + 8, 29, 2, 1, '#141018')
+      p.set(DX, 29, '#141018').set(DX + 17, 29, '#141018')
+      // combadge, and two full pips and a hollow one on the collar
+      p.rect(DX + 4, 34, 2, 2, '#e8c547').set(DX + 4, 34, '#fff3b0')
+      p.set(DX + 10, 34, '#e8c547').set(DX + 12, 34, '#e8c547').set(DX + 14, 34, '#7a6a2a')
+    },
+  })
+  // keep the title corner quiet
+  s += `<rect x="0" y="${40 * Q}" width="${36 * Q}" height="${8 * Q}" fill="url(#mmShadeG)"/>`
+  return s
+}
+
+// ---------- Blink of an Eye: the planet where time runs fast ----------
+// One 17.17 s story, one long night on a fast world. Voyager hangs in orbit over
+// a daylit planet. Night sweeps slowly across it, and in that one night a whole
+// civilisation grows: camp fires, then towns, then roads and glowing cities. A
+// little rocket climbs from the biggest city to the ship; a tiny astronaut Clawd
+// floats out, waves at Voyager and drifts in behind the hull to come aboard.
+// Dawn sweeps back across, the lights fade into the day, and the planet looks
+// exactly as it did at the start. Every light fades in over a second or more.
+
+const beT = SCENE_SECONDS
+const beK = (t: number) => +(t / beT).toFixed(4)
+
+// Pix written as one <path> per colour
+function bePath(p: Pix) {
+  const m = (p as any).m as Map<number, Map<number, string>>
+  const by = new Map<string, string>()
+  for (const [y, row] of m) {
+    const xs = [...row.keys()].sort((a, b) => a - b)
+    let i = 0
+    while (i < xs.length) {
+      const c = row.get(xs[i])!
+      let j = i
+      while (j + 1 < xs.length && xs[j + 1] === xs[j] + 1 && row.get(xs[j + 1]) === c) j++
+      const w = (xs[j] - xs[i] + 1) * Q
+      by.set(c, (by.get(c) || '') + `M${xs[i] * Q} ${y * Q}h${w}v${Q}h-${w}z`)
+      i = j + 1
+    }
+  }
+  let out = ''
+  for (const [c, d] of by) out += `<path fill="${c}" d="${d}"/>`
+  return out
+}
+
+// opacity along the story, keyed in seconds (starts at 0, ends at beT)
+function beFade(keys: [number, number][]) {
+  return `<animate attributeName="opacity" dur="${beT}s" repeatCount="indefinite" values="${keys.map(k => k[1]).join(';')}" keyTimes="${keys.map(k => beK(k[0])).join(';')}"/>`
+}
+
+// translate in grid units along the story, eased per segment
+function beMove(keys: [number, number, number][], splines?: string[]) {
+  const t = keys.map(k => beK(k[0])).join(';')
+  const v = keys.map(k => `${+(k[1] * Q).toFixed(2)} ${+(k[2] * Q).toFixed(2)}`).join(';')
+  const sp = (splines || keys.slice(1).map(() => '0.45 0 0.55 1')).join(';')
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" keySplines="${sp}" dur="${beT}s" repeatCount="indefinite" values="${v}" keyTimes="${t}"/>`
+}
+
+// shrink smoothly between a and b (seconds), as something moves away from us
+const beScale = (a: number, b: number, to: number) =>
+  `<animateTransform attributeName="transform" type="scale" calcMode="spline" keySplines="0 0 1 1;0.45 0 0.55 1;0 0 1 1" dur="${beT}s" repeatCount="indefinite" values="1;1;${to};${to}" keyTimes="0;${beK(a)};${beK(b)};1"/>`
+
+// a light that fades in at a, over f seconds, then stays (dawn hides it via the night mask)
+const beLight = (svg: string, a: number, f: number) => `<g opacity="0">${svg}${beFade([[0, 0], [a, 0], [a + f, 1], [beT, 1]])}</g>`
+
+// the planet: a big sphere below, its top limb across the lower half
+const BE_PX = 81
+const BE_PY = 70
+const BE_PR = 37
+
+type BeCell = { x: number; y: number; land: boolean; cloud: boolean; d: number }
+
+function beSurface() {
+  const cells: BeCell[] = []
+  for (let y = 24; y < GH; y++) {
+    for (let x = 0; x < GW; x++) {
+      const dx = x + 0.5 - BE_PX
+      const dy = y + 0.5 - BE_PY
+      const d = Math.sqrt(dx * dx + dy * dy)
+      if (d > BE_PR + 1) continue
+      const nx = Math.max(-1, Math.min(1, dx / BE_PR))
+      const ny = Math.max(-1, Math.min(1, dy / BE_PR))
+      const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny))
+      const lon = Math.atan2(nx, nz)
+      const lat = Math.asin(ny)
+      const v = Math.sin(lon * 3.3 + 1.3 * Math.sin(lat * 5.2)) + 0.8 * Math.sin(lat * 4.1 + lon * 1.9 + 1.1) + 0.35 * Math.sin(lon * 8.3 + lat * 6.1)
+      const cv = Math.sin(lon * 4.7 + lat * 11 + 2) + 0.6 * Math.sin(lon * 9.1 - lat * 3.3)
+      cells.push({ x, y, land: v > 0.45, cloud: cv > 1.25, d })
+    }
+  }
+  return cells
+}
+
+function bePlanet(cells: BeCell[], night: boolean) {
+  const p = new Pix()
+  const L = [-0.45, -0.6, 0.66]
+  const day = {
+    sea: ['#1f4472', '#285689', '#30659c'],
+    land: ['#3b6340', '#4f7a4b', '#66905a'],
+    sand: ['#7a7050', '#958760', '#ad9e6c'],
+    cloud: ['#7d8ea8', '#9eaec4', '#bcc8d8'],
+    rim: '#8fd0ff',
+    halo: '#3d64b0',
+  }
+  const dark = {
+    sea: ['#0c1228', '#0f162f', '#121a36'],
+    land: ['#141829', '#171c2f', '#1b2135'],
+    sand: ['#181b2a', '#1c1f30', '#202435'],
+    cloud: ['#1c2139', '#21273f', '#272e48'],
+    rim: '#2c3a72',
+    halo: '#191c3c',
+  }
+  const pal = night ? dark : day
+  for (const c of cells) {
+    if (c.d > BE_PR) {
+      p.set(c.x, c.y, pal.halo)
+      continue
+    }
+    if (c.d > BE_PR - 1) {
+      p.set(c.x, c.y, pal.rim)
+      continue
+    }
+    const nx = (c.x + 0.5 - BE_PX) / BE_PR
+    const ny = (c.y + 0.5 - BE_PY) / BE_PR
+    const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny))
+    const b = 0.5 + 0.5 * (nx * L[0] + ny * L[1] + nz * L[2])
+    const i = b < 0.62 ? 0 : b < 0.8 ? 1 : 2
+    const sandy = c.land && Math.sin(c.x * 0.31 + c.y * 0.9) > 0.55
+    const set = c.cloud ? pal.cloud : sandy ? pal.sand : c.land ? pal.land : pal.sea
+    p.set(c.x, c.y, set[c.d > BE_PR - 3 ? Math.max(0, i - 1) : i])
+  }
+  return bePath(p)
+}
+
+// Voyager in a three-quarter side view, bow to the right: a sleek arrowhead saucer
+// flowing back into a narrow secondary hull, the deflector glowing under the saucer,
+// and slim nacelles aft on short pylons that rise from low on the hull.
+function beShip(x0: number, cy: number) {
+  const p = new Pix()
+  const X = (u: number) => x0 + u
+  const nacelle = (u0: number, y: number, far: boolean) => {
+    const top = far ? '#a49eb8' : '#eeebf4'
+    const mid = far ? '#7d7794' : '#bdb7cb'
+    const bot = far ? '#4a4462' : '#6e6888'
+    p.rect(X(u0 + 2), y, 14, 1, top).set(X(u0 + 1), y, mid)
+    p.rect(X(u0), y + 1, 17, 1, far ? '#3a86bc' : '#4fb8f0').rect(X(u0 + 3), y + 1, 11, 1, far ? '#6cb4dc' : '#b4ecff')
+    p.rect(X(u0 + 1), y + 2, 15, 1, bot)
+    p.set(X(u0 + 17), y + 1, far ? '#c04a34' : '#ff6a4a').set(X(u0 + 16), y, far ? '#8a3a2a' : '#c8503a').set(X(u0 + 16), y + 2, '#7a2e22')
+    p.set(X(u0 + 17), y, mid).set(X(u0 + 17), y + 2, bot)
+  }
+  const pylon = (pts: [number, number][], c1: string, c2: string) => pts.forEach(([u, y]) => p.set(X(u), y, c1).set(X(u + 1), y, c2))
+  // the far nacelle and its pylon, behind everything
+  nacelle(-1, cy - 4, true)
+  pylon([[8, cy - 1], [9, cy], [10, cy + 1], [11, cy + 2]], '#6e6888', '#5a5470')
+  // secondary hull: narrow, flowing aft from under the saucer, shuttlebay at the stern
+  for (let u = 3; u <= 33; u++) {
+    const top = u < 17 ? cy + 2 - Math.round(Math.min(2, (u - 3) * 0.18)) : cy + 1
+    const bot = u < 10 ? cy + 3 + Math.round((u - 3) * 0.6) : u <= 26 ? cy + 7 : cy + 7 - Math.round((u - 26) * 0.8)
+    for (let y = top; y <= bot; y++) {
+      let c = y === top ? '#e6e2ee' : y <= top + 1 ? '#c8c2d6' : '#9c96b0'
+      if (y === bot) c = '#5a5470'
+      if (y === bot - 1 && bot - top > 2) c = '#7a7490'
+      p.set(X(u), y, c)
+    }
+  }
+  p.rect(X(3), cy + 2, 1, 2, '#2a2440').set(X(4), cy + 3, '#7fd4ff') // shuttlebay
+  for (let u = 7; u <= 25; u += 3) p.set(X(u), cy + 5, '#ffe9a0')
+  // navigational deflector, under the saucer's leading part
+  p.set(X(29), cy + 4, '#2f6f9f').set(X(30), cy + 4, '#6fd8ff').set(X(31), cy + 4, '#2f6f9f')
+  p.set(X(29), cy + 5, '#6fd8ff').set(X(30), cy + 5, '#e2f8ff').set(X(31), cy + 5, '#6fd8ff').set(X(30), cy + 6, '#2f6f9f')
+  // the saucer: top surface seen from a little above, plus its thin rim
+  for (let u = 15; u <= 47; u++) {
+    const t = (u - 15) / 32
+    const h = 5.2 * Math.sin(Math.PI * Math.pow(t, 0.58))
+    const hi = Math.round(h)
+    if (h < 0.35) {
+      p.set(X(u), cy, '#dcd7e6').set(X(u), cy + 1, '#8a839e')
+      continue
+    }
+    for (let y = cy - hi; y <= cy + Math.round(h * 0.45); y++) {
+      const c = y === cy - hi ? '#ffffff' : y < cy - hi * 0.3 ? '#f0edf6' : y <= cy ? '#dcd7e6' : '#c4bed2'
+      p.set(X(u), y, c)
+    }
+    const rim = cy + Math.round(h * 0.45) + 1
+    p.set(X(u), rim, u % 2 && u > 19 && u < 43 ? '#ffe9a0' : '#8a839e')
+    if (h > 1.6) p.set(X(u), rim + 1, '#5a5470')
+  }
+  // bridge dome toward the rear, plating line, impulse engines, red pinstripe at the bow
+  p.rect(X(24), cy - 2, 3, 1, '#ffffff').rect(X(23), cy - 1, 5, 1, '#e2deec').rect(X(24), cy - 3, 3, 1, '#c8c2d6').set(X(25), cy - 3, '#ffffff')
+  for (let u = 28; u <= 40; u += 4) p.set(X(u), cy - 3, '#d2cce0').set(X(u - 2), cy + 1, '#b0aac0')
+  p.rect(X(29), cy - 1, 12, 1, '#e8e5f0')
+  p.set(X(16), cy, '#ff8a5a').set(X(16), cy + 1, '#ff8a5a').set(X(15), cy + 1, '#c8583a')
+  p.rect(X(37), cy + 2, 6, 1, '#b0503e')
+  // the near pylon rises from low on the hull to the near nacelle
+  pylon([[12, cy + 6], [11, cy + 5], [10, cy + 4]], '#bdb7cb', '#8a839e')
+  nacelle(-4, cy + 1, false)
+  return bePath(p)
+}
+
+// the tiny astronaut: Clawd in a glass helmet and a white suit
+const BE_ASTRO = [
+  '....gggggg.....',
+  '..ggw.....gg...',
+  '.gw..LLLLLL.g..',
+  '.g.oooooooo.g..',
+  'g..ooEoooEo..g.',
+  'g..ooEoooEo..g.',
+  'g..oooooooo..g.',
+  '.gssSSSSSSssg..',
+  '.oSSSSSSSSSSo..',
+  '..sSSSSSSSSs...',
+  '..U.U....U.U...',
+]
+const BE_ASTRO_PAL: Record<string, string> = {
+  g: '#8fd0f0', w: '#eef9ff', L: '#eb9575', o: '#d97757', E: '#1a1020',
+  S: '#ece8f4', s: '#b4aec6', U: '#7e7894',
+}
+
+function blinkOfAnEye() {
+  const W = GW * Q
+  const H = GH * Q
+  let seed = 1995
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
+
+  // ---- the story, in seconds ----
+  const NIGHT0 = 2.0 // night starts to sweep in from the right
+  const NIGHT1 = 5.4 // the whole visible planet is dark
+  const TOWNS = 5.6 // towns grow around the fires
+  const CITIES = 7.6 // cities and roads
+  const LAUNCH = 10.0 // the rocket lights up on its pad
+  const ARRIVE = 12.3 // and hovers beside Voyager
+  const WAVE = 13.4 // Clawd waves
+  const ABOARD = 14.5 // Clawd drifts up under the saucer
+  const DAWN0 = 13.6 // dawn sweeps back from the right
+  const DAWN1 = 16.6 // the planet is all daylight again
+
+  // night terminator: left edge of an 80-wide soft band, in grid units
+  const NL0 = 92
+  const NL1 = 40
+  const NL2 = -30
+  const nightAt = (x: number) => NIGHT0 + ((NL0 + 10 - x) / (NL0 - NL1)) * (NIGHT1 - NIGHT0)
+
+  let s = `<defs>
+    <linearGradient id="beSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0a0918"/><stop offset="1" stop-color="#1a1633"/></linearGradient>
+    <linearGradient id="beFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="beFade"><rect width="${W}" height="${H}" fill="url(#beFadeG)"/></mask>
+    <linearGradient id="beTermG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#000"/><stop offset="0.125" stop-color="#fff"/><stop offset="0.875" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient>
+    <mask id="beNight" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><rect x="0" y="0" width="${80 * Q}" height="${H}" fill="url(#beTermG)"><animateTransform attributeName="transform" type="translate" dur="${beT}s" repeatCount="indefinite" values="${NL0 * Q} 0;${NL0 * Q} 0;${NL1 * Q} 0;${NL1 * Q} 0;${NL2 * Q} 0;${NL2 * Q} 0" keyTimes="0;${beK(NIGHT0)};${beK(NIGHT1)};${beK(DAWN0)};${beK(DAWN1)};1"/></rect></mask>
+    <radialGradient id="beNeb"><stop offset="0" stop-color="#7b5bc6" stop-opacity="0.22"/><stop offset="1" stop-color="#7b5bc6" stop-opacity="0"/></radialGradient>
+    <radialGradient id="beCityG"><stop offset="0" stop-color="#ffc870" stop-opacity="0.5"/><stop offset="0.6" stop-color="#ff9a4a" stop-opacity="0.14"/><stop offset="1" stop-color="#ff9a4a" stop-opacity="0"/></radialGradient>
+    <radialGradient id="beNacG"><stop offset="0" stop-color="#6fd0ff" stop-opacity="0.45"/><stop offset="1" stop-color="#6fd0ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="bePadG"><stop offset="0" stop-color="#ffd28a" stop-opacity="0.6"/><stop offset="1" stop-color="#ff9a4a" stop-opacity="0"/></radialGradient>
+    <radialGradient id="beGlassG"><stop offset="0" stop-color="#bfe6ff" stop-opacity="0.05"/><stop offset="1" stop-color="#bfe6ff" stop-opacity="0.22"/></radialGradient>
+  </defs>`
+
+  // ---- space: sky, a violet haze, stars, a small moon ----
+  let back = `<rect width="${W}" height="${H}" fill="url(#beSky)"/>`
+  back += `<ellipse cx="${30 * Q}" cy="${12 * Q}" rx="70" ry="24" fill="url(#beNeb)"/>`
+  const dots = [new Pix(), new Pix(), new Pix()]
+  for (let y = 1; y < 40; y += 3) {
+    for (let x = 0; x < GW; x += 3) {
+      if (rnd() < 0.55) continue
+      dots[Math.floor(rnd() * 3)].set(x + Math.floor(rnd() * 2), y, '#cdbaf0')
+    }
+  }
+  dots.forEach((d, i) => (back += `<g opacity="${(0.14 + i * 0.13).toFixed(2)}">${bePath(d)}</g>`))
+  ;[[24, 4], [72, 22], [86, 3], [40, 24], [12, 14]].forEach(([x, y], i) => {
+    const glow = new Pix()
+    glow.set(x - 1, y, '#bfa8ee').set(x + 1, y, '#bfa8ee').set(x, y - 1, '#bfa8ee').set(x, y + 1, '#bfa8ee')
+    back += `<g>${bePath(glow)}<animate attributeName="opacity" values="0.15;0.75;0.15" dur="${(beT / [6, 5, 4, 7, 5][i]).toFixed(4)}s" begin="${(-i * 0.53).toFixed(2)}s" repeatCount="indefinite"/></g>`
+    back += bePath(new Pix().set(x, y, '#ffffff'))
+  })
+  const moon = new Pix()
+  const mx = 24
+  const my = 31
+  for (let y = -3; y <= 3; y++) {
+    for (let x = -3; x <= 3; x++) {
+      const d = x * x + y * y
+      if (d > 11) continue
+      let c = '#9a8fb4'
+      if (x + y < -1) c = '#c9bede'
+      if (x + y > 2) c = '#6a6084'
+      moon.set(mx + x, my + y, c)
+    }
+  }
+  moon.set(mx + 1, my - 1, '#8a7fa4').set(mx - 1, my + 1, '#8a7fa4')
+  back += bePath(moon)
+
+  // ---- the planet: daylit underneath, the night side laid over it through the moving terminator ----
+  const cells = beSurface()
+  back += bePlanet(cells, false)
+  back += `<g mask="url(#beNight)">${bePlanet(cells, true)}</g>`
+  s += `<g mask="url(#beFade)">${back}</g>`
+
+  // ---- the lights of one fast night ----
+  const spots = cells.filter(c => c.land && !c.cloud && c.d < BE_PR - 2.5 && c.y >= 30 && c.x >= 54 && c.x <= 88)
+  const pick = () => spots[Math.floor(rnd() * spots.length)]
+  const onLand = new Set(spots.map(c => `${c.x},${c.y}`))
+  let lights = ''
+
+  // the main cities: where the rocket will launch, and two more
+  const cities: [number, number][] = [[76, 38], [84, 42], [65, 44]]
+  // camp fires, one by one as the dark reaches them
+  const fires: [number, number][] = [[76, 39], [84, 43], [65, 45], [80, 37], [88, 45], [71, 41], [60, 46], [79, 45]]
+  for (let i = 0; i < 4; i++) {
+    const c = pick()
+    fires.push([c.x, c.y])
+  }
+  fires.forEach(([x, y]) => {
+    const a = Math.max(nightAt(x) + 0.3, NIGHT0 + 0.8) + rnd() * 0.6
+    lights += beLight(bePath(new Pix().set(x, y, '#ff8a3d')), a, 1.2)
+  })
+
+  // towns: small amber clusters growing around the fires
+  const near = (x: number, y: number, n: number, col: string[]) => {
+    const p = new Pix()
+    for (let k = 0; k < n; k++) {
+      const px = x + Math.round((rnd() - 0.5) * 4)
+      const py = y + Math.round((rnd() - 0.5) * 2)
+      if (onLand.has(`${px},${py}`) || (Math.abs(px - x) < 2 && Math.abs(py - y) < 2)) p.set(px, py, col[Math.floor(rnd() * col.length)])
+    }
+    return p
+  }
+  fires.forEach(([x, y], i) => {
+    const a = TOWNS + (i / fires.length) * 1.8 + rnd() * 0.3
+    lights += beLight(bePath(near(x, y, 4, ['#f2b866', '#e89a4a'])), a, 1.0)
+  })
+
+  // roads between the cities and the towns, laid one after another
+  const road = (a: [number, number], b: [number, number]) => {
+    const p = new Pix()
+    const n = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]))
+    for (let k = 1; k < n; k++) {
+      const x = Math.round(a[0] + ((b[0] - a[0]) * k) / n)
+      const y = Math.round(a[1] + ((b[1] - a[1]) * k) / n)
+      if (k % 2 === 0 || n < 6) p.set(x, y, '#b9813e')
+    }
+    return bePath(p)
+  }
+  const roads: [[number, number], [number, number]][] = [
+    [cities[0], cities[1]], [cities[0], cities[2]], [cities[1], [88, 45]], [cities[0], [80, 37]], [cities[2], [60, 46]], [cities[1], [79, 45]], [cities[0], [71, 41]],
+  ]
+  roads.forEach(([a, b], i) => (lights += beLight(road(a, b), CITIES + 0.2 + i * 0.28, 1.2)))
+
+  // cities: warm-white cores with amber edges, and a soft glow over each
+  cities.forEach(([x, y], i) => {
+    const r = i === 0 ? 3 : 2.4
+    const p = new Pix()
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -4; dx <= 4; dx++) {
+        const d = Math.sqrt((dx * dx) / 2.2 + dy * dy * 1.2) + (rnd() - 0.5) * 0.9
+        if (d > r) continue
+        const c = d < r * 0.35 ? '#fff4d6' : d < r * 0.7 ? '#ffd98a' : rnd() < 0.55 ? '#f2a84a' : ''
+        if (c) p.set(x + dx, y + dy, c)
+      }
+    }
+    const a = CITIES + 0.4 + i * 0.6
+    lights += `<g opacity="0"><ellipse cx="${(x + 0.5) * Q}" cy="${(y + 0.5) * Q}" rx="${(r + 7) * Q}" ry="${(r + 3) * Q}" fill="url(#beCityG)"/>${beFade([[0, 0], [a + 0.6, 0], [a + 2.4, 1], [beT, 1]])}</g>`
+    lights += beLight(bePath(p), a, 1.4)
+  })
+  // the suburbs fill in between
+  for (let i = 0; i < 8; i++) {
+    const c = pick()
+    lights += beLight(bePath(new Pix().set(c.x, c.y, i % 2 ? '#ffd98a' : '#f2b866')), CITIES + 1.2 + i * 0.15, 1.0)
+  }
+  s += `<g mask="url(#beNight)">${lights}</g>`
+
+  // ---- the launch: a soft glow on the pad, then a rocket climbing to the ship ----
+  const [lx, ly] = cities[0]
+  s += `<ellipse cx="${(lx + 0.5) * Q}" cy="${(ly - 0.5) * Q}" rx="${5 * Q}" ry="${3 * Q}" fill="url(#bePadG)" opacity="0">${beFade([[0, 0], [LAUNCH + 0.3, 0], [LAUNCH + 1.0, 1], [LAUNCH + 1.6, 0.8], [LAUNCH + 3.2, 0], [beT, 0]])}</ellipse>`
+  // rocket base point over time (grid)
+  const RISE = LAUNCH + 0.6
+  const rocketPath: [number, number, number][] = [
+    [0, lx, ly - 1], [RISE, lx, ly - 1], [RISE + 0.7, lx - 1, ly - 5], [RISE + 1.3, lx - 3, ly - 8.5], [ARRIVE, lx - 4, ly - 9],
+    [WAVE, lx - 4, ly - 9], [WAVE + 1.0, lx - 20, ly - 21], [beT, lx - 20, ly - 21],
+  ]
+  // smoke puffs left along the climb
+  for (let i = 0; i < 7; i++) {
+    const t0 = RISE + 0.05 + i * 0.22
+    const f = Math.min(1, (t0 - RISE) / 1.5)
+    const px = lx - f * f * 3.4 + (rnd() - 0.5)
+    const py = ly - 1 + 1 - f * 7.4
+    const sz = i < 2 ? 2 : 1
+    s += `<rect x="${(px - sz / 2 + 0.5) * Q}" y="${py * Q}" width="${sz * Q}" height="${Q}" fill="#a9a2bd" opacity="0"><animateTransform attributeName="transform" type="translate" dur="${beT}s" repeatCount="indefinite" values="0 0;0 0;${(rnd() - 0.5) * 4} 3;${(rnd() - 0.5) * 4} 3" keyTimes="0;${beK(t0)};${beK(t0 + 2.6)};1"/>${beFade([[0, 0], [t0, 0], [t0 + 0.3, 0.55], [t0 + 2.6, 0], [beT, 0]])}</rect>`
+  }
+  const rocket = new Pix().rows(
+    ['..R..', '.wWw.', '.wcw.', '.www.', '.RRR.', '.www.', 'swwws', 's.g.s'],
+    -2, -8,
+    { R: '#d0503a', w: '#d8d4e4', W: '#f4f2fa', c: '#7fd4ff', s: '#8a849e', g: '#4e4862' },
+  )
+  const flame = new Pix().set(0, 0, '#ffe39a').set(0, 1, '#ff9a4a').set(-1, 1, '#d8602e').set(1, 1, '#d8602e')
+  const flameG = `<g opacity="0">${bePath(flame)}${beFade([[0, 0], [RISE - 0.3, 0], [RISE, 1], [RISE + 1.4, 1], [ARRIVE + 0.1, 0], [beT, 0]])}</g>`
+
+  // ---- Clawd the astronaut: steps out from behind the rocket, waves, drifts in behind the hull ----
+  const astro = new Pix().rows(BE_ASTRO, 0, 0, BE_ASTRO_PAL)
+  const armDown = bePath(new Pix().set(12, 8, '#d97757'))
+  const armUp = new Pix()
+  armUp.set(12, 8, '#ece8f4').set(13, 7, '#ece8f4').set(13, 6, '#ece8f4').set(13, 5, '#d97757')
+  armUp.set(12, 3, '#d97757').set(14, 3, '#d97757').rect(12, 4, 3, 1, '#d97757').set(12, 3, '#eb9575').set(14, 3, '#eb9575')
+  const lids = bePath(new Pix().rect(5, 4, 1, 2, '#d97757').rect(9, 4, 1, 2, '#d97757'))
+  let clawd = `<ellipse cx="${7 * Q}" cy="${4 * Q}" rx="${6.5 * Q}" ry="${4.6 * Q}" fill="url(#beGlassG)"/>`
+  clawd += bePath(astro)
+  // the wave goes rest -> out -> half -> up and back, ~90 ms per in-between
+  const armMid1 = bePath(new Pix().set(12, 8, '#ece8f4').set(13, 8, '#d97757').set(13, 7, '#d97757').set(14, 7, '#eb9575'))
+  const armMid2 = bePath(new Pix().set(12, 8, '#ece8f4').set(13, 7, '#ece8f4').set(13, 6, '#d97757').rect(12, 5, 3, 1, '#d97757').set(12, 4, '#eb9575').set(14, 4, '#eb9575'))
+  const st = 0.09
+  const W1 = WAVE + 1.1
+  clawd += shown(armDown, [[0, WAVE], [W1 + 2 * st, beT]], beT)
+  clawd += shown(armMid1, [[WAVE, WAVE + st], [W1 + st, W1 + 2 * st]], beT)
+  clawd += shown(armMid2, [[WAVE + st, WAVE + 2 * st], [W1, W1 + st]], beT)
+  clawd += shown(bePath(armUp), [[WAVE + 2 * st, W1]], beT)
+  clawd += shown(lids, [[ARRIVE + 1.6, ARRIVE + 1.75]], beT)
+  const cStart: [number, number] = [lx - 13, ly - 19]
+  const cHover: [number, number] = [lx - 22, ly - 18]
+  const cAboard: [number, number] = [lx - 33, ly - 31.5]
+  const clawdG =
+    `<g opacity="0">${beFade([[0, 0], [ARRIVE, 0], [ARRIVE + 0.7, 1], [ABOARD + 1.15, 1], [ABOARD + 1.45, 0], [beT, 0]])}` +
+    `<g>${beMove([[0, ...cStart], [ARRIVE, ...cStart], [ARRIVE + 1.0, ...cHover], [ABOARD, ...cHover], [ABOARD + 1.1, ...cAboard], [beT, ...cAboard]])}` +
+    `<g transform="translate(${7 * Q} ${5.5 * Q})"><g>${beScale(ABOARD, ABOARD + 1.1, 0.4)}<g transform="translate(${-7 * Q} ${-5.5 * Q})"><g>${clawd}<animateTransform attributeName="transform" type="translate" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1" values="0 0;0 ${Q};0 0" keyTimes="0;0.5;1" dur="${(beT / 7).toFixed(4)}s" repeatCount="indefinite"/></g></g></g></g></g></g>`
+  const rocketG =
+    `<g opacity="0">${beFade([[0, 0], [LAUNCH, 0], [LAUNCH + 0.6, 1], [WAVE + 1.05, 1], [WAVE + 1.35, 0], [beT, 0]])}` +
+    `<g>${beMove(rocketPath, ['0 0 1 1', '0.5 0 0.9 0.6', '0.1 0.3 0.9 0.7', '0.1 0.3 0.3 1', '0 0 1 1', '0.45 0 0.55 1', '0 0 1 1'])}<g transform="translate(0 ${-4 * Q})"><g>${beScale(WAVE, WAVE + 1.0, 0.45)}<g transform="translate(0 ${4 * Q})">${bePath(rocket)}${flameG}</g></g></g></g></g>`
+  s += clawdG + rocketG
+
+  // ---- Voyager in orbit: drawn last, so the visitors slip in behind its hull ----
+  const vx = 30
+  const vcy = 9
+  const halo = `<ellipse cx="${(vx + 8) * Q}" cy="${(vcy + 1.5) * Q}" rx="22" ry="5" fill="url(#beNacG)"/><ellipse cx="${(vx + 10) * Q}" cy="${(vcy - 2.5) * Q}" rx="20" ry="4" fill="url(#beNacG)"/>`
+  let ship = `<g>${halo}<animate attributeName="opacity" values="0.7;1;0.7" dur="${(beT / 4).toFixed(4)}s" repeatCount="indefinite"/></g>`
+  ship += beShip(vx, vcy)
+  ship += `<g>${bePath(new Pix().set(vx + 33, vcy - 5, '#ff5a5a'))}<animate attributeName="opacity" values="0.35;1;0.35" dur="${(beT / 6).toFixed(4)}s" repeatCount="indefinite"/></g>`
+  ship += `<g>${bePath(new Pix().set(vx + 36, vcy + 3, '#5aff8a'))}<animate attributeName="opacity" values="0.35;1;0.35" dur="${(beT / 6).toFixed(4)}s" begin="${(-beT / 12).toFixed(3)}s" repeatCount="indefinite"/></g>`
+  s += `<g mask="url(#beFade)">${ship}</g>`
+  return s
+}
+
+// ---------- Year of Hell: Janeway rams the Krenim timeship ----------
+// One 17.17 s story on the bridge viewscreen. Calm: a pristine Voyager glides.
+// The Krenim timeship slides in, its segmented drum turning; a slow amber
+// temporal wave sweeps the screen and history changes: Voyager is battered and
+// smoking, the bridge scorched, a console sparking (small local sparks only).
+// Janeway raises her claw and Voyager moves slowly into the timeship: a small
+// local glow. A pale wave runs back the other way: the timeship dissolves,
+// Voyager drifts back, every scar fades, and the pristine ship glides on calmly.
+
+const yhJaneway: CrabHD = {
+  skin: '#d97757',
+  light: '#eb9575',
+  shade: '#b85f43',
+  upper: '#b3262e', // command red shoulders
+  lower: '#16121c', // black Voyager jacket
+  lowerShade: '#0c0a10',
+  legs: '#16121c',
+  rim: '#f6a77c',
+}
+
+const yhK = (t: number) => +(t / SCENE_SECONDS).toFixed(4)
+
+// an ambient loop period that divides the story exactly, so the hard restart is seamless
+const yhPer = (d: number) => +(SCENE_SECONDS / Math.max(1, Math.round(SCENE_SECONDS / d))).toFixed(5)
+
+// Pix written as one <path> per colour
+function yhPath(p: Pix) {
+  const m = (p as any).m as Map<number, Map<number, string>>
+  const by = new Map<string, string>()
+  for (const [y, row] of m) {
+    const xs = [...row.keys()].sort((a, b) => a - b)
+    let i = 0
+    while (i < xs.length) {
+      const c = row.get(xs[i])!
+      let j = i
+      while (j + 1 < xs.length && xs[j + 1] === xs[j] + 1 && row.get(xs[j + 1]) === c) j++
+      const w = (xs[j] - xs[i] + 1) * Q
+      by.set(c, (by.get(c) || '') + `M${xs[i] * Q} ${y * Q}h${w}v${Q}h-${w}z`)
+      i = j + 1
+    }
+  }
+  let out = ''
+  for (const [c, d] of by) out += `<path fill="${c}" d="${d}"/>`
+  return out
+}
+
+// opacity along the story: [time, value] points (padded to 0 and SCENE_SECONDS)
+function yhRamp(pts: [number, number][]) {
+  const T = SCENE_SECONDS
+  const all: [number, number][] = [...(pts[0][0] > 0 ? [[0, pts[0][1]] as [number, number]] : []), ...pts]
+  if (all[all.length - 1][0] < T) all.push([T, all[all.length - 1][1]])
+  return `<animate attributeName="opacity" dur="${T}s" repeatCount="indefinite" values="${all.map(p => p[1]).join(';')}" keyTimes="${all.map(p => yhK(p[0])).join(';')}"/>`
+}
+
+// translate along the story in art pixels: [time, dx, dy], with an optional spline per segment
+function yhMove(keys: [number, number, number][], splines?: string[]) {
+  const t = keys.map(k => yhK(k[0])).join(';')
+  const v = keys.map(k => `${+(k[1] * Q).toFixed(2)} ${+(k[2] * Q).toFixed(2)}`).join(';')
+  const mode = splines ? ` calcMode="spline" keySplines="${splines.join(';')}"` : ''
+  return `<animateTransform attributeName="transform" type="translate"${mode} dur="${SCENE_SECONDS}s" repeatCount="indefinite" values="${v}" keyTimes="${t}"/>`
+}
+
+const yhR = (x: number, y: number, w: number, h: number, c: string, extra = '') =>
+  `<rect x="${x * Q}" y="${y * Q}" width="${w * Q}" height="${h * Q}" fill="${c}"${extra}/>`
+
+function yhArmHalf(k: CrabHD, x: number, y: number) {
+  const p = new Pix()
+  const ax = x + 19
+  p.rect(x + 18, y + 4, 3, 2, k.skin)
+  p.rect(ax, y, 2, 4, k.skin)
+  p.rect(ax + 1, y, 1, 4, k.shade)
+  const cx = x + 18
+  p.rect(cx, y - 4, 1, 3, k.skin).rect(cx + 3, y - 4, 1, 3, k.skin)
+  p.rect(cx, y - 2, 4, 1, k.skin).rect(cx + 1, y - 1, 2, 1, k.skin)
+  p.set(cx, y - 4, k.light).set(cx + 3, y - 4, k.light)
+  return yhPath(p)
+}
+
+// a small spark source: a local glow that rises over 0.4 s and fades over 0.9 s, three sparks flying off
+function yhSpark(x: number, y: number, period: number, begin: number) {
+  period = yhPer(period)
+  begin = -begin
+  const px = (x + 0.5) * Q
+  const py = (y + 0.5) * Q
+  const a = (0.4 / period).toFixed(3)
+  const b = (1.3 / period).toFixed(3)
+  let s = `<circle cx="${px}" cy="${py}" r="6" fill="url(#yhSparkG)" opacity="0"><animate attributeName="opacity" values="0;0.9;0;0" keyTimes="0;${a};${b};1" dur="${period}s" begin="${begin}s" repeatCount="indefinite"/></circle>`
+  const paths = ['M0 0 q 3 -6 7 -2', 'M0 0 q -2 -7 -6 -1', 'M0 0 q 1 -5 3 2']
+  paths.forEach((d, i) => {
+    s += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="${i === 1 ? '#ffe9a0' : '#ffb347'}" opacity="0"><animateMotion path="${d}" keyPoints="0;0;1;1" keyTimes="0;${a};${b};1" calcMode="linear" dur="${period}s" begin="${begin}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0;0.95;0;0" keyTimes="0;${(0.3 / period).toFixed(3)};${a};${b};1" dur="${period}s" begin="${begin}s" repeatCount="indefinite"/></rect>`
+  })
+  return s
+}
+
+function yearOfHell() {
+  const T = SCENE_SECONDS
+  const W = GW * Q
+  const H = GH * Q
+
+  // ---- the beat sheet, in seconds ----
+  const tShipIn = 2.0 // the timeship slides in from the right...
+  const tShipSet = 4.4 // ...and holds
+  const tWave = 4.4 // the amber temporal wave sweeps the screen, right to left
+  const tWaveEnd = 6.2
+  const tScar = 5.2 // Voyager's damage appears as the wave passes her
+  const tScarFull = 6.4
+  const tBridge = 5.8 // then the bridge: scorch, debris, red alert, sparks
+  const tBridgeFull = 7.0
+  const tHalf = 8.1 // Janeway's claw comes up: ram it
+  const tUp = 8.4
+  const tRam = 8.6 // Voyager moves slowly into the timeship
+  const tHit = 11.0 // contact: a small local glow
+  const tLower = 11.4
+  const tDown = 11.7
+  const tReset = 11.9 // a pale wave runs back: history resets
+  const tGone = 14.0 // timeship erased, damage gone
+  const tHome = 14.3 // Voyager is back on her course
+
+  // ---- screen area (art px) ----
+  const SX = 18
+  const SY = 2
+  const SW = 71
+  const SH = 24
+
+  let s = `<defs>
+    <linearGradient id="yhFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="yhFade"><rect x="-10" y="-10" width="${W + 20}" height="${H + 20}" fill="url(#yhFadeG)"/></mask>
+    <linearGradient id="yhWall" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#141019"/><stop offset="1" stop-color="#2a2133"/></linearGradient>
+    <linearGradient id="yhSpace" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#06050d"/><stop offset="1" stop-color="#151026"/></linearGradient>
+    <radialGradient id="yhNeb"><stop offset="0" stop-color="#b07ad6" stop-opacity="0.22"/><stop offset="1" stop-color="#b07ad6" stop-opacity="0"/></radialGradient>
+    <radialGradient id="yhNebA"><stop offset="0" stop-color="#e0904a" stop-opacity="0.16"/><stop offset="1" stop-color="#e0904a" stop-opacity="0"/></radialGradient>
+    <radialGradient id="yhHalo"><stop offset="0" stop-color="#ff9a3d" stop-opacity="0.3"/><stop offset="1" stop-color="#ff9a3d" stop-opacity="0"/></radialGradient>
+    <radialGradient id="yhHit"><stop offset="0" stop-color="#ffe0a0" stop-opacity="0.75"/><stop offset="0.45" stop-color="#ff9a3d" stop-opacity="0.3"/><stop offset="1" stop-color="#ff7a3a" stop-opacity="0"/></radialGradient>
+    <radialGradient id="yhSparkG"><stop offset="0" stop-color="#ffd27a" stop-opacity="0.7"/><stop offset="1" stop-color="#ff8a3d" stop-opacity="0"/></radialGradient>
+    <radialGradient id="yhBreachG"><stop offset="0" stop-color="#ff9a3d" stop-opacity="0.6"/><stop offset="1" stop-color="#ff6a2a" stop-opacity="0"/></radialGradient>
+    <linearGradient id="yhWaveA" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ffb35a" stop-opacity="0"/><stop offset="0.5" stop-color="#ffb35a" stop-opacity="0.22"/><stop offset="1" stop-color="#ffb35a" stop-opacity="0"/></linearGradient>
+    <linearGradient id="yhWaveB" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#bfe0ff" stop-opacity="0"/><stop offset="0.5" stop-color="#bfe0ff" stop-opacity="0.2"/><stop offset="1" stop-color="#bfe0ff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="yhDrumShade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity="0.55"/><stop offset="0.3" stop-color="#000" stop-opacity="0"/><stop offset="0.7" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.6"/></linearGradient>
+    <pattern id="yhScan" width="4" height="4" patternUnits="userSpaceOnUse"><rect y="2" width="4" height="2" fill="#000" opacity="0.08"/></pattern>
+    <clipPath id="yhScreen"><rect x="${SX * Q}" y="${SY * Q}" width="${SW * Q}" height="${SH * Q}"/></clipPath>
+  </defs>`
+
+  let seed = 1997
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
+
+  // ======== the bridge behind: wall, left LCARS panel, captain's chair (fading in from the band) ========
+  let back = `<rect x="-6" y="-6" width="${W + 12}" height="${H + 12}" fill="url(#yhWall)"/>`
+  const lc = new Pix()
+  lc.rect(4, 5, 11, 16, '#0b0910')
+  lc.rect(5, 6, 9, 2, '#c9a7ff').rect(5, 8, 2, 11, '#c9a7ff').set(5, 6, '#0b0910')
+  lc.rect(8, 9, 3, 2, '#f29a3a').rect(12, 9, 2, 2, '#8aa7e8').rect(8, 12, 6, 1, '#f7c487')
+  lc.rect(8, 14, 2, 2, '#d9584a').rect(11, 14, 3, 2, '#c39be0').rect(5, 19, 9, 1, '#8aa7e8')
+  back += `<g opacity="0.6">${yhPath(lc)}</g>`
+  // wall panel under the screen, LCARS strip, rail, floor
+  const low = new Pix()
+  low.rect(0, 27, GW, 4, '#221b2b').rect(0, 27, GW, 1, '#2f2639')
+  ;[[20, 6, '#c9a7ff'], [27, 3, '#f29a3a'], [31, 9, '#8aa7e8'], [41, 4, '#c39be0'], [57, 5, '#f7c487'], [63, 8, '#c9a7ff'], [72, 3, '#d9584a'], [76, 10, '#8aa7e8']].forEach(([x, w, c]) =>
+    low.rect(x as number, 29, w as number, 1, c as string),
+  )
+  low.rect(0, 31, GW, 1, '#8a8299').rect(0, 32, GW, 1, '#3a3346')
+  for (const x of [22, 46, 70]) low.rect(x, 33, 1, 2, '#3a3346')
+  low.rect(0, 33, GW, 15, '#1a1623').rect(0, 34, GW, 1, '#221d2d').rect(0, 39, GW, 1, '#1f1a29').rect(0, 44, GW, 1, '#16121e')
+  // captain's chair, half in the band's fade
+  low.rect(9, 30, 9, 7, '#3c3346').rect(9, 30, 9, 1, '#5a5068').rect(10, 31, 7, 5, '#4a4056')
+  low.rect(7, 36, 13, 2, '#3c3346').rect(7, 36, 13, 1, '#5a5068').rect(12, 38, 3, 3, '#2a2332').rect(10, 41, 7, 1, '#2a2332')
+  back += yhPath(low)
+  // red alert: low steady strips that appear with the damage and leave with it (never pulsing)
+  back += `<g opacity="0">${yhR(0, 0, GW, 1, '#ff2e3a')}${yhR(1, 4, 2, 20, '#ff2e3a')}${yhR(0, 27, GW, 1, '#ff2e3a')}${yhRamp([[tBridge, 0], [tBridgeFull, 0.42], [tReset + 0.3, 0.42], [tGone, 0]])}</g>`
+  s += `<g mask="url(#yhFade)">${back}</g>`
+
+  // ======== the viewscreen ========
+  const bez = new Pix()
+  bez.rect(SX - 1, SY - 1, SW + 2, SH + 2, '#0e0b12').rect(SX, SY - 1, SW, 1, '#4a4152').rect(SX - 1, SY, 1, SH, '#2a2330')
+  bez.rect(SX, SY + SH, SW, 1, '#3a3142')
+  s += `<g mask="url(#yhFade)">${yhPath(bez)}</g>`
+
+  let scr = yhR(SX, SY, SW, SH, 'url(#yhSpace)')
+  scr += `<ellipse cx="${34 * Q}" cy="${8 * Q}" rx="56" ry="20" fill="url(#yhNeb)"/>`
+  scr += `<ellipse cx="${72 * Q}" cy="${18 * Q}" rx="60" ry="22" fill="url(#yhNebA)"/>`
+  const stars = [new Pix(), new Pix(), new Pix()]
+  for (let y = SY + 1; y < SY + SH; y += 2) {
+    for (let x = SX + 1; x < SX + SW; x += 3) {
+      if (rnd() < 0.72) continue
+      stars[Math.floor(rnd() * 3)].set(x + (y % 3), y, '#cdbaf0')
+    }
+  }
+  stars.forEach((d, i) => (scr += `<g opacity="${0.18 + i * 0.14}">${yhPath(d)}</g>`))
+  ;[[30, 5], [52, 21], [84, 4], [70, 23]].forEach(([x, y], i) => {
+    const glow = new Pix()
+    glow.set(x - 1, y, '#bfa8ee').set(x + 1, y, '#bfa8ee').set(x, y - 1, '#bfa8ee').set(x, y + 1, '#bfa8ee')
+    scr += `<g>${yhPath(glow)}<animate attributeName="opacity" values="0.15;0.75;0.15" dur="${yhPer(3 + i * 0.7)}s" begin="-${i * 0.6}s" repeatCount="indefinite"/></g>`
+    scr += yhPath(new Pix().set(x, y, '#ffffff'))
+  })
+
+  // ---- the Krenim timeship: spike, a drum of counter-rotating segments, engine block, fins ----
+  const cy = 13
+  let ts = `<ellipse cx="${70 * Q}" cy="${(cy + 0.5) * Q}" rx="44" ry="26" fill="url(#yhHalo)"/>`
+  const hull = new Pix()
+  // forward spike
+  for (let x = 45; x <= 57; x++) hull.set(x, cy, x < 48 ? '#c9a070' : '#7a5a3e')
+  for (let x = 49; x <= 57; x++) hull.set(x, cy - 1, '#9a7650').set(x, cy + 1, '#4a3424')
+  for (let x = 53; x <= 57; x++) hull.set(x, cy - 2, '#86643f').set(x, cy + 2, '#3a2a1c')
+  hull.set(44, cy, '#e8c08a').set(51, cy, '#ffb347').set(55, cy, '#ffb347')
+  // engine block at the rear
+  for (let y = cy - 4; y <= cy + 4; y++) {
+    for (let x = 81; x <= 87; x++) {
+      let c = y < cy - 2 ? '#8a6644' : y > cy + 2 ? '#3a2a1c' : '#634631'
+      if (x === 81) c = '#2a1c12'
+      hull.set(x, y, c)
+    }
+  }
+  hull.set(82, cy - 1, '#ffcf7a').set(84, cy, '#ffcf7a').set(86, cy - 1, '#ffcf7a').set(83, cy + 2, '#d9772e')
+  for (let k = 0; k < 6; k++) {
+    hull.rect(82 + k, cy - 5 - k, 3, 1, k === 5 ? '#c49060' : '#7a5a3e')
+    hull.rect(82 + k, cy + 5 + k, 3, 1, '#45301f')
+  }
+  hull.rect(88, cy - 2, 1, 5, '#ffb347').set(88, cy, '#ffe9a0')
+  ts += yhPath(hull)
+  // the drum: six segments, each one a strip of ribs scrolling up or down inside its silhouette
+  const segH = [5, 7, 8, 8, 7, 5]
+  const bands = [
+    ['#c49060', '#a87a50', '#7e5a3a'],
+    ['#8a6444', '#74543a', '#58402c'],
+    ['#4a3424', '#3e2c1e', '#2e2016'],
+  ]
+  let clips = ''
+  segH.forEach((h, i) => {
+    const sx = 57 + i * 4
+    const ribs = new Pix()
+    for (let y = cy - h - 3; y <= cy + h + 3; y++) {
+      const b = bands[((y % 3) + 3) % 3]
+      for (let c = 0; c < 4; c++) ribs.set(sx + c, y, b[Math.min(c, 2)])
+      if (((y % 3) + 3) % 3 === 0 && (y * 7 + i * 5) % 4 === 0) ribs.set(sx + 1, y, '#ffc070')
+    }
+    clips += `<clipPath id="yhSeg${i}"><rect x="${sx * Q}" y="${(cy - h) * Q}" width="${4 * Q}" height="${(2 * h + 1) * Q}"/></clipPath>`
+    const dir = i % 2 ? 3 : -3
+    const spin = `<animateTransform attributeName="transform" type="translate" values="0 0;0 ${dir * Q}" dur="${yhPer(1.6)}s" repeatCount="indefinite"/>`
+    ts += `<g clip-path="url(#yhSeg${i})"><g>${yhPath(ribs)}${spin}</g>${yhR(sx, cy - h, 4, 2 * h + 1, 'url(#yhDrumShade)')}</g>`
+    // the seam to the next segment glows amber
+    if (i < segH.length - 1) {
+      const g = Math.min(h, segH[i + 1])
+      ts += yhR(sx + 4, cy - g + 1, 0.5, 2 * g - 1, '#ff9a3d', ' opacity="0.8"')
+    }
+  })
+  s = s.replace('</defs>', `${clips}</defs>`)
+  // it slides in from the right and holds; when history resets it dissolves, then waits off screen
+  scr += `<g opacity="0"><g>${ts}${yhMove(
+    [[0, 34, 0], [tShipIn, 34, 0], [tShipSet, 0, 0], [tReset, 0, 0], [tGone, 3, 0], [tGone + 0.2, 34, 0], [T, 34, 0]],
+    ['0 0 1 1', '0.2 0.6 0.4 1', '0 0 1 1', '0.4 0 0.6 1', '0 0 1 1', '0 0 1 1'],
+  )}</g>${yhRamp([[tShipIn, 0], [tShipIn + 1.4, 1], [tReset, 1], [tGone - 0.3, 0]])}</g>`
+
+  // amber temporal wave, right to left: history changes
+  scr += `<g opacity="0"><rect x="0" y="${SY * Q}" width="${16 * Q}" height="${SH * Q}" fill="url(#yhWaveA)">${yhMove([[0, SX + SW, 0], [tWave, SX + SW, 0], [tWaveEnd, SX - 16, 0], [T, SX - 16, 0]])}</rect>${yhRamp([[tWave - 0.1, 0], [tWave, 1], [tWaveEnd, 1], [tWaveEnd + 0.1, 0]])}</g>`
+
+  // ---- Voyager, side on, nose to the right ----
+  const vx = 23
+  const vy = 10
+  const vPal: Record<string, string> = {
+    n: '#8d93a0', N: '#5d6370', g: '#5fb6ff', R: '#ff5a4a', p: '#555a66', t: '#c5cad4',
+    h: '#d6dbe3', H: '#a3a9b5', d: '#6e7480', w: '#ffe9a8', D: '#7fd0ff', i: '#ff7a5a',
+  }
+  const voy = new Pix().rows(
+    [
+      '.nnnnnnnnnR............',
+      '.ggggggggNn............',
+      '....pp.........tth.....',
+      '.....pp....hhhhhhhhhh..',
+      '......ihhhhHHHHHHHHHhhh',
+      '.....HHHHHHwHHwHHwHHHd.',
+      '....dddHHHHHHHHHdddd...',
+      '......dddddDDddd.......',
+    ],
+    vx, vy, vPal,
+  )
+  let ship = yhPath(voy)
+  // nav light at the nose, breathing slowly
+  ship += `<g>${yhPath(new Pix().set(vx + 22, vy + 4, '#ffffff'))}<animate attributeName="opacity" values="0.3;1;0.3" dur="${yhPer(2.8)}s" repeatCount="indefinite"/></g>`
+  // the year of hell: scorch, a burning breach, a dead nacelle, smoke trailing behind
+  const scar = new Pix()
+  ;[[12, 4], [13, 4], [12, 5], [13, 5], [7, 6], [8, 6], [9, 6], [10, 5], [17, 3], [18, 3], [16, 6], [17, 6], [10, 3], [11, 3], [20, 4], [21, 4], [8, 7], [9, 7]].forEach(([x, y]) => scar.set(vx + x, vy + y, '#3b3640'))
+  ;[[19, 3], [20, 3]].forEach(([x, y]) => scar.set(vx + x, vy + y, '#0b0915'))
+  scar.set(vx + 14, vy + 4, '#c0452a').set(vx + 15, vy + 4, '#ff9a3d').set(vx + 15, vy + 5, '#ffd27a').set(vx + 14, vy + 5, '#c0452a')
+  ;[2, 3, 4, 5, 6].forEach(x => scar.set(vx + x, vy + 1, '#24384f'))
+  scar.set(vx + 5, vy + 5, '#0b0915').set(vx + 6, vy + 5, '#2a2430').set(vx + 4, vy + 2, '#2a2430')
+  let dmg = yhPath(scar)
+  dmg += `<circle cx="${(vx + 15) * Q}" cy="${(vy + 5) * Q}" r="7" fill="url(#yhBreachG)"><animate attributeName="opacity" values="0.6;1;0.6" dur="${yhPer(2.2)}s" repeatCount="indefinite"/></circle>`
+  for (let i = 0; i < 4; i++) {
+    const d = yhPer(3.2 + i * 0.4)
+    dmg += `<rect x="${(vx + 14) * Q}" y="${(vy + 3) * Q}" width="${2 * Q}" height="${Q}" fill="#b0a8c0" opacity="0"><animateMotion path="M0 0 q -8 -4 -22 -5" dur="${d}s" begin="-${i * 0.8}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.65;0" dur="${d}s" begin="-${i * 0.8}s" repeatCount="indefinite"/></rect>`
+  }
+  ship += `<g opacity="0">${dmg}${yhRamp([[tScar, 0], [tScarFull, 1], [tReset + 0.3, 1], [tGone - 0.4, 0]])}</g>`
+  // glides; limps and sags in the year of hell; moves slowly into the timeship; drifts back as history resets
+  scr += `<g>${ship}${yhMove(
+    [[0, 0, 0], [tScar, 1.2, 0], [tBridgeFull, 1.6, 1], [tRam, 2, 1], [tHit, 16, 0], [tReset, 16, 0], [tHome, -1, 0], [T, 0, 0]],
+    ['0 0 1 1', '0 0 1 1', '0 0 1 1', '0.5 0 0.85 0.7', '0 0 1 1', '0.4 0 0.5 1', '0 0 1 1'],
+  )}</g>`
+
+  // contact: a small local glow on the drum, rising, holding briefly and cooling
+  const hx = 60
+  const hy = cy + 1
+  scr += `<circle cx="${(hx + 0.5) * Q}" cy="${(hy + 0.5) * Q}" r="16" fill="url(#yhHit)" opacity="0">${yhRamp([[tHit - 0.2, 0], [tHit + 0.5, 0.9], [tHit + 0.9, 0.9], [tGone - 0.6, 0]])}</circle>`
+  for (let i = 0; i < 6; i++) {
+    const t0 = tHit + 0.1 + i * 0.15
+    const a = -Math.PI / 2 + (i - 2.5) * 0.55
+    const dx = Math.cos(a) * (5 + (i % 3) * 2) * Q
+    const dy = Math.sin(a) * (4 + (i % 2) * 2) * Q * (i % 2 ? 1 : -1)
+    scr += `<rect x="${hx * Q}" y="${hy * Q}" width="${Q}" height="${Q}" fill="${i % 2 ? '#ffd36b' : '#ff9a3d'}" opacity="0"><animateTransform attributeName="transform" type="translate" dur="${T}s" repeatCount="indefinite" values="0 0;0 0;${dx.toFixed(1)} ${dy.toFixed(1)};${dx.toFixed(1)} ${dy.toFixed(1)}" keyTimes="0;${yhK(t0)};${yhK(t0 + 1.4)};1"/>${yhRamp([[t0, 0], [t0 + 0.4, 0.9], [t0 + 1.4, 0]])}</rect>`
+  }
+
+  // pale wave, left to right: the timeline restored
+  scr += `<g opacity="0"><rect x="0" y="${SY * Q}" width="${16 * Q}" height="${SH * Q}" fill="url(#yhWaveB)">${yhMove([[0, SX - 16, 0], [tReset, SX - 16, 0], [tGone - 0.3, SX + SW, 0], [T, SX + SW, 0]])}</rect>${yhRamp([[tReset - 0.1, 0], [tReset, 1], [tGone - 0.3, 1], [tGone - 0.2, 0]])}</g>`
+
+  // the screen glass: scanlines, a crack while the bridge is damaged, a faint glint
+  scr += yhR(SX, SY, SW, SH, 'url(#yhScan)')
+  const crack = new Pix()
+  ;[[20, 3], [21, 4], [22, 4], [23, 5], [24, 6], [24, 7], [25, 8], [22, 6], [21, 7], [26, 5], [27, 5], [28, 4]].forEach(([x, y]) => crack.set(x, y, '#d8d0e6'))
+  scr += `<g opacity="0">${yhPath(crack)}${yhRamp([[tBridge, 0], [tBridgeFull, 0.4], [tReset + 0.3, 0.4], [tGone, 0]])}</g>`
+  scr += `<polygon points="${80 * Q},${SY * Q} ${88 * Q},${SY * Q} ${88 * Q},${(SY + 7) * Q}" fill="#ffffff" opacity="0.05"/>`
+  s += `<g clip-path="url(#yhScreen)">${scr}</g>`
+
+  // ======== ops console on the right ========
+  const con = new Pix()
+  con.rect(62, 34, 25, 1, '#9a8fa6').rect(61, 35, 27, 1, '#0b0910')
+  con.rect(62, 35, 4, 1, '#f29a3a').rect(67, 35, 3, 1, '#8aa7e8').rect(71, 35, 5, 1, '#c39be0').rect(77, 35, 3, 1, '#f7c487').rect(81, 35, 5, 1, '#8aa7e8')
+  con.rect(61, 36, 27, 6, '#3a3346').rect(61, 36, 27, 1, '#544a63').rect(61, 41, 27, 1, '#241e2d')
+  for (const x of [68, 76, 84]) con.rect(x, 37, 1, 4, '#2a2433')
+  s += yhPath(con)
+  ;[[63, 38], [71, 39], [79, 38]].forEach(([x, y], i) => {
+    s += `<g>${yhR(x, y, 2, 1, i === 1 ? '#ff6b5a' : '#f7c487')}<animate attributeName="opacity" values="1;0.4;1" dur="${yhPer(2.2 + i * 0.6)}s" repeatCount="indefinite"/></g>`
+  })
+
+  // ======== bridge damage: scorch, a dead LCARS stretch, a fallen strut, rubble, a hanging cable, smoke ========
+  const br = new Pix()
+  br.rect(70, 34, 6, 1, '#1a1418').rect(69, 35, 8, 1, '#141016').set(72, 36, '#141016').set(73, 37, '#141016').set(72, 38, '#141016')
+  br.set(71, 34, '#3a2a22').set(75, 35, '#3a2a22')
+  br.rect(41, 29, 4, 1, '#2a2430').rect(57, 29, 5, 1, '#2a2430')
+  br.set(58, 28, '#141016').set(59, 27, '#141016').set(42, 28, '#141016')
+  // fallen strut on the floor, and rubble
+  for (let i = 0; i < 10; i++) br.set(48 + i, 40 - Math.floor(i / 4), '#9a92ac').set(48 + i, 41 - Math.floor(i / 4), '#4a4258')
+  br.set(48, 39, '#8a8299').set(57, 37, '#8a8299')
+  ;[[50, 41], [53, 41], [59, 41], [60, 40], [46, 41]].forEach(([x, y], i) => br.set(x, y, i % 2 ? '#4a4256' : '#5a5068'))
+  // a cable torn loose from the screen's lower edge
+  ;[[80, 27], [80, 28], [81, 29], [81, 30], [81, 31], [80, 32]].forEach(([x, y]) => br.set(x, y, '#2a2332'))
+  br.set(80, 33, '#8a8299')
+  let bd = yhPath(br)
+  for (let i = 0; i < 2; i++) {
+    const d = yhPer(4.2 + i * 0.9)
+    bd += `<rect x="${72 * Q}" y="${33 * Q}" width="${2 * Q}" height="${Q}" fill="#7a7088" opacity="0"><animateMotion path="M0 0 q -3 -8 2 -16" dur="${d}s" begin="-${i * 1.9}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.35;0" dur="${d}s" begin="-${i * 1.9}s" repeatCount="indefinite"/></rect>`
+  }
+  s += `<g opacity="0">${bd}${yhRamp([[tBridge, 0], [tBridgeFull, 1], [tReset + 0.3, 1], [tGone, 0]])}</g>`
+  // small local sparks from the console and the cable tip, only while the bridge is damaged
+  s += `<g opacity="0">${yhSpark(72, 34, 2.6, 0.3)}${yhSpark(80, 33, 3.4, 1.5)}${yhRamp([[tBridgeFull - 0.4, 0], [tBridgeFull, 1], [tReset, 1], [tReset + 0.6, 0]])}</g>`
+
+  // ======== Janeway: auburn bun, black jacket, red shoulders, four pips ========
+  const k = yhJaneway
+  const jx = 27
+  const jy = 28
+  const { p: jp, ex } = clawdBody(k, jx, jy, 'right')
+  const hair = '#8a3a1e'
+  const hairL = '#b2522a'
+  const dark = '#5e2412'
+  jp.rect(jx + 1, jy, 15, 1, hair).rect(jx + 4, jy, 9, 1, hairL)
+  jp.rect(jx, jy + 1, 2, 3, hair).set(jx + 2, jy + 1, hair).set(jx, jy + 3, dark)
+  jp.rect(jx + 2, jy - 1, 11, 1, hair).rect(jx + 5, jy - 1, 6, 1, hairL)
+  jp.rows(['.bbb.', 'bLLbb', 'bLbbd', '.bbd.'], jx, jy - 4, { b: hair, L: hairL, d: dark })
+  for (const c of [12, 13, 14, 15]) jp.set(jx + c, jy + 7, '#e8c547')
+  jp.rect(jx + 4, jy + 6, 2, 2, '#e8c547').set(jx + 4, jy + 6, '#fff3b0')
+  let jn = yhPath(jp)
+  const raise: [number, number][] = [[tHalf, tDown]]
+  jn += shown(armRestHD(k, jx, jy, 'left'), [[0, T]], T)
+  jn += shown(armRestHD(k, jx, jy, 'right'), complement(raise, T), T)
+  // rest -> diagonal -> half -> up, and back the same way: in-between frames of 0.09 s each
+  const st = 0.09
+  jn += shown(armMidHD(k, jx, jy, 'right'), [[tHalf, tHalf + st], [tDown - st, tDown]], T)
+  jn += shown(yhArmHalf(k, jx, jy), [[tHalf + st, tHalf + 2 * st], [tDown - 2 * st, tDown - st]], T)
+  jn += shown(armUpHD(k, jx, jy, 'right'), [[tHalf + 2 * st, tDown - 2 * st]], T)
+  // soot and a torn sleeve while history is at its worst
+  const soot = new Pix()
+  soot.set(jx + 14, jy + 4, '#8e4a36').set(jx + 15, jy + 5, '#8e4a36').set(jx + 3, jy + 5, '#9a5440')
+  soot.set(jx + 9, jy + 8, '#3a2a30').set(jx + 10, jy + 9, '#3a2a30').set(jx + 2, jy + 7, '#2a1a1a').set(jx + 16, jy + 8, '#3a2a30')
+  soot.set(jx + 13, jy, dark).set(jx + 16, jy + 1, hair)
+  jn += `<g opacity="0">${yhPath(soot)}${yhRamp([[tBridge, 0], [tBridgeFull, 1], [tReset + 0.3, 1], [tGone, 0]])}</g>`
+  // blinks, placed on the story
+  const lids = new Pix()
+  ex.forEach(e => lids.rect(jx + e, jy + 2, 2, 3, k.skin))
+  jn += shown(yhPath(lids), [[1.5, 1.65], [7.2, 7.35], [13.1, 13.25], [16.0, 16.15]], T)
+  // a small rise of relief once the timeline is whole again
+  s += `<g>${jn}${hopQ([[tHome + 0.3, tHome + 0.8]], T).split(`0 ${-2 * Q}`).join(`0 ${-Q}`)}</g>`
+
+  return s
+}
+
 type Scene = { name: string; w: number; h: number; draw: () => string }
 
 // Scenes reworked to one 17.17 s story that passed the flash check and review; the rest wait
-const APPROVED = new Set(['Darmok', 'All Good Things', 'The Cloud', 'First Contact', 'Caretaker', 'Chain of Command', 'Scorpion', 'Q Who', 'The Doctor', 'The Inner Light', 'Déjà Q', 'Tapestry', 'The Best of Both Worlds'])
+const APPROVED = new Set(['Darmok', 'All Good Things', 'The Cloud', 'First Contact', 'Caretaker', 'Chain of Command', 'Scorpion', 'Q Who', 'The Doctor', 'The Inner Light', 'Déjà Q', 'Tapestry', 'The Best of Both Worlds', "Yesterday's Enterprise", 'The Measure of a Man', 'Blink of an Eye', 'Year of Hell'])
 
 const SCENES_ALL: Scene[] = [
   { name: 'Darmok', w: GW * Q, h: GH * Q, draw: darmok },
@@ -5237,6 +6871,10 @@ const SCENES_ALL: Scene[] = [
   { name: 'Déjà Q', w: GW * Q, h: GH * Q, draw: facepalm },
   { name: 'Tapestry', w: GW * Q, h: GH * Q, draw: tapestry },
   { name: 'The Best of Both Worlds', w: GW * Q, h: GH * Q, draw: bestOfBothWorldsHD },
+  { name: "Yesterday's Enterprise", w: GW * Q, h: GH * Q, draw: yesterdaysEnterprise },
+  { name: 'The Measure of a Man', w: GW * Q, h: GH * Q, draw: measureOfAMan },
+  { name: 'Blink of an Eye', w: GW * Q, h: GH * Q, draw: blinkOfAnEye },
+  { name: 'Year of Hell', w: GW * Q, h: GH * Q, draw: yearOfHell },
 ]
 const SCENES: Scene[] = SCENES_ALL.filter(one => APPROVED.has(one.name))
 const SCENE_NAMES = SCENES.map(one => one.name)

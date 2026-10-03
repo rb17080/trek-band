@@ -1,6 +1,6 @@
 {
   "name": "trek-band",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "A lilac band above the Claude Code prompt: live 5-hour and weekly usage, and Clawd acting out iconic Star Trek scenes.",
   "types": "./types/index.d.ts",
   "author": {

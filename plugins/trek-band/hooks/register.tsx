@@ -4878,17 +4878,44 @@ function countdown(l: Limit, now: number) {
   return d > 0 ? `${d}:${String(h).padStart(2, '0')}:${m}` : `${h}:${m}`
 }
 
+// "Sun 7:00 PM", or just "1:26 PM" today
+function resetText(l: Limit, now: number) {
+  const at = resetAt(l, now)
+  if (!(at > now)) return ''
+  const d = new Date(at)
+  const h = d.getHours()
+  const m = d.getMinutes()
+  const time = `${h % 12 || 12}${m ? `:${String(m).padStart(2, '0')}` : ''}${h < 12 ? 'AM' : 'PM'}`
+  const today = new Date(now).toDateString() === d.toDateString()
+  return today ? time : `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]} ${time}`
+}
+
+const windowName = (kind: string) =>
+  kind === 'five_hour' ? 'Session' : kind === 'seven_day' ? 'Weekly' : `Weekly ${kind.replace(/^seven_day_/, '').replace(/^\w/, ch => ch.toUpperCase())}`
+
 const label = (kind: string) =>
   kind === 'five_hour' ? '5h' : kind === 'seven_day' ? '7d' : kind.replace(/_/g, ' ')
 
 const RING = 30
 
-function ringSvg(limit: Limit, icon: 'clock' | 'cal') {
+// How long each window runs
+const windowMs = (kind: string) => (kind === 'five_hour' ? 5 * 3600_000 : 7 * 86400_000)
+
+// Red past 90%; amber when the pace so far would reach 100% before the window resets
+function ringColor(l: Limit, now: number) {
+  if (l.percentUsed >= 90) return C.hot
+  const at = l.resetsAt ? Date.parse(l.resetsAt) : 0
+  const w = windowMs(l.kind)
+  const elapsed = w - (at - now)
+  if (!(at > now) || elapsed < w * 0.05) return C.ring
+  return (l.percentUsed * w) / elapsed >= 100 ? C.warn : C.ring
+}
+
+function ringSvg(limit: Limit, icon: 'clock' | 'cal', color: string) {
   const c = RING / 2
   const R = c - 2.5
   const circ = 2 * Math.PI * R
   const pct = Math.max(0, Math.min(100, limit.percentUsed))
-  const color = pct >= 90 ? C.hot : pct >= 75 ? C.warn : C.ring
   let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${RING}" height="${RING}" viewBox="0 0 ${RING} ${RING}">`
   s += `<circle cx="${c}" cy="${c}" r="${R}" fill="#241a36" stroke="${C.track}" stroke-width="2.5"/>`
   s += `<circle cx="${c}" cy="${c}" r="${R}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="${(circ * pct) / 100} ${circ}" transform="rotate(-90 ${c} ${c})"/>`
@@ -5039,7 +5066,8 @@ export const register: Register = on => {
   })
 
   on('session.measure', async ($, e, next) => {
-    if (e.changed.includes('rateLimits')) await update($, limits, () => e.rateLimits.map(toLimit))
+    if (e.changed.includes('rateLimits'))
+      await update($, limits, old => [...e.rateLimits.map(toLimit), ...old.filter(l => !e.rateLimits.some(r => r.kind === l.kind))])
     // a response just landed: the cache was used, and its hour restarted, now
     if (e.changed.includes('context')) await markMessage($)
     return next(e)
@@ -5122,9 +5150,9 @@ export const register: Register = on => {
         <Box flexDirection="row" alignItems="center" gap={3} flexShrink={1} minWidth={0} overflow="hidden">
           {shown.length === 0 && <Text color={C.dim} wrap="truncate">Usage limits show up after Claude's first reply.</Text>}
           {shown.map(l => (
-            <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0}>
+            <Box key={`ring-${l.kind}`} flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0} position="relative">
               <Svg
-                source={ringSvg(l, l.kind === 'seven_day' ? 'cal' : 'clock')}
+                source={ringSvg(l, l.kind === 'five_hour' ? 'clock' : 'cal', ringColor(l, now))}
                 alt={`${label(l.kind)} ${Math.round(l.percentUsed)}%`}
                 width={RING}
                 height={RING}
@@ -5133,13 +5161,15 @@ export const register: Register = on => {
               <Box minWidth={countdownCells(l)} flexShrink={0}>
                 <Text color={C.dim}>{l.isReset ? '' : countdown(l, now)}</Text>
               </Box>
+              <Box position="absolute" top={0} bottom={0} left={0} display="none" hover={{ display: 'flex' }} alignItems="center" backgroundColor={C.bg}>
+                <Text color={C.dim} wrap="truncate">{[l.kind.startsWith('seven_day_') ? windowName(l.kind).replace(/^Weekly /, '') : '', `${l.percentUsed.toFixed(1)}%`, l.isReset ? '' : resetText(l, now)].filter(Boolean).join(' · ')}</Text>
+              </Box>
             </Box>
           ))}
         </Box>
         </Box>
-        <Box key={`scene-${idx}`} flexShrink={0} position="relative">
-          <Svg source={sceneAt(idx, shownAt ? (now - shownAt) / 1000 : 0)} alt={name} width={SCENE_W} height={SCENE_H} />
-          <Box position="absolute" top={0} right={0} flexDirection="row">
+        <Box flexDirection="row" alignItems="center" flexShrink={0}>
+          <Box flexDirection="column" alignItems="center" flexShrink={0} marginRight={1}>
             <Button
               key="trek-pause"
               label={paused ? '▶' : '⏸'}
@@ -5160,6 +5190,9 @@ export const register: Register = on => {
                 rotateAfter($)
               }}
             />
+          </Box>
+          <Box key={`scene-${idx}`} flexShrink={0}>
+            <Svg source={sceneAt(idx, shownAt ? (now - shownAt) / 1000 : 0)} alt={name} width={SCENE_W} height={SCENE_H} />
           </Box>
         </Box>
       </Box>

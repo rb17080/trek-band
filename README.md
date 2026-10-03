@@ -12,7 +12,7 @@ A [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview): a li
 
 ## What you get
 
-- **Usage at a glance.** Two rings for the 5-hour and the weekly limit, the same live figures as the app's usage panel, each with how long until it resets: `4:39` (hours:minutes), `1:18:03` (days:hours:minutes). The rings turn amber at 75% and red at 90%.
+- **Usage at a glance.** Two rings for the 5-hour and the weekly limit, the same live figures as the app's usage panel, each with how long until it resets: `4:39` (hours:minutes), `1:18:03` (days:hours:minutes). A ring turns amber when your pace so far would use it up before it resets, and red at 90%. Hover a ring for the exact figure and the reset time: `57.0% · Sun 7PM`.
 - **A prompt-cache timer** in the bar under the prompt, next to the model name: `Cache: 59:57`, ticking every second. The prompt cache lasts an hour from the last message, yours or Claude's. The timer counts down in green while the cache is warm; once it expires it turns red and counts up, so you know a cache miss is coming. It disappears in sessions idle for more than six hours.
 - **Thirteen scenes**, each a 17-second story that plays twice before the next one:
 
@@ -48,7 +48,7 @@ The scenes draw in the **Code tab of the Claude desktop app**. In a terminal the
 
 | | |
 | --- | --- |
-| `/trek` or ⏭ | next scene |
+| `/trek` or ⏭ (left of the scene) | next scene |
 | `/trek pause` or ⏸ | stay on this scene |
 | `/trek play` or ▶ | rotate again |
 

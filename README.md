@@ -12,7 +12,7 @@ A [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview): a li
 
 ## What you get
 
-- **Usage at a glance.** Two rings for the 5-hour and the weekly limit, each with how long until it resets: `4:39` (hours:minutes), `1:18:03` (days:hours:minutes). The rings turn amber at 75% and red at 90%.
+- **Usage at a glance.** Two rings for the 5-hour and the weekly limit, the same live figures as the app's usage panel, each with how long until it resets: `4:39` (hours:minutes), `1:18:03` (days:hours:minutes). The rings turn amber at 75% and red at 90%.
 - **A prompt-cache timer** in the bar under the prompt, next to the model name: `Cache: 59:57`, ticking every second. The prompt cache lasts an hour from the last message, yours or Claude's. The timer counts down in green while the cache is warm; once it expires it turns red and counts up, so you know a cache miss is coming. It disappears in sessions idle for more than six hours.
 - **Thirteen scenes**, each a 17-second story that plays twice before the next one:
 
@@ -58,7 +58,7 @@ trek-band is a mod: JavaScript hooks that run inside Claude Code. It draws the `
 
 One detail shapes the design: the desktop app rebuilds every mod drawing whenever anything changes, and a rebuilt SVG starts its animation from zero. The cache timer ticks every second, so the band is rebuilt every second too, and each rebuild hands the scene over already advanced to where it was: every animation's start time is shifted back by the seconds the scene has been showing.
 
-Like any mod, it runs with your permissions. Read [`plugins/trek-band/hooks/register.tsx`](plugins/trek-band/hooks/register.tsx), or run `claude plugin validate plugins/trek-band` to list every event it hooks and every call it makes. It reads usage figures and draws. It makes no network requests and touches no files.
+Like any mod, it runs with your permissions. Read [`plugins/trek-band/hooks/register.tsx`](plugins/trek-band/hooks/register.tsx), or run `claude plugin validate plugins/trek-band` to list every event it hooks and every call it makes. It reads usage figures, keeps a timer, and draws. It makes one network request every three minutes, shared by all your open sessions: your plan usage, from `api.anthropic.com/api/oauth/usage`, with your Claude login. The engine attaches the login itself, so the mod never sees it. It touches no files.
 
 ## Make a scene
 

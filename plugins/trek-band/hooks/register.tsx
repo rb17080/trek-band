@@ -4903,6 +4903,54 @@ function ringSvg(limit: Limit, icon: 'clock' | 'cal') {
 
 const toLimit = (l: Limit): Limit => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })
 
+// Live plan usage, the same figures as the app's own usage panel: fetched every minute with the
+// session's own login (the engine sets the credential; the mod never sees it)
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1'
+
+// Every open session runs this mod, and the usage service refuses callers that ask too often, so
+// the sessions share one reading through $.store: whichever is due fetches, the rest reuse it.
+// A refusal pushes the next try back (its Retry-After, else doubling up to half an hour).
+const USAGE_EVERY_MS = 3 * 60 * 1000
+
+type UsageShared = { at: number; next: number; backoff: number; limits: Limit[] }
+
+async function pollUsage($: Host) {
+  try {
+    const now = await $.clock.now()
+    const shared = ((await $.store.get('usage')) ?? { at: 0, next: 0, backoff: 0, limits: [] }) as UsageShared
+    if (now < shared.next) {
+      if (shared.limits.length > 0 && shared.at > 0) await update($, limits, () => shared.limits)
+      return
+    }
+    // claim the slot first, so the other sessions wait for this fetch
+    await $.store.set('usage', { ...shared, next: now + USAGE_EVERY_MS })
+    const auth = await $.session.authorize()
+    if (!auth) return
+    const res = await $.http.fetch(USAGE_URL, {
+      auth: auth.handle,
+      headers: { 'anthropic-beta': 'oauth-2025-04-20', 'Content-Type': 'application/json', 'User-Agent': 'claude-cli/2.1.286 (external, claude-desktop)', 'x-app': 'cli' },
+    })
+    if (!res.ok) {
+      const retry = Number(res.headers['retry-after'])
+      const backoff = Math.min(30 * 60 * 1000, Math.max(USAGE_EVERY_MS, shared.backoff * 2))
+      const wait = retry > 0 ? retry * 1000 : backoff
+      await $.store.set('usage', { ...shared, next: now + wait, backoff })
+      return
+    }
+    const body = JSON.parse(res.text) as Record<string, any>
+    const iso = (at: unknown) => (typeof at === 'number' ? new Date(at * 1000).toISOString() : typeof at === 'string' ? at : undefined)
+    const next: Limit[] = []
+    for (const kind of ['five_hour', 'seven_day']) {
+      const w = body[kind]
+      if (w && typeof w.utilization === 'number') next.push({ kind, percentUsed: Math.round(w.utilization * 10) / 10, resetsAt: iso(w.resets_at) })
+    }
+    await $.store.set('usage', { at: now, next: now + USAGE_EVERY_MS, backoff: 0, limits: next })
+    if (next.length > 0) await update($, limits, () => next)
+  } catch {
+    // the next poll tries again
+  }
+}
+
 // The prompt cache lives an hour from the last message, yours or Claude's
 const CACHE_MS = 60 * 60 * 1000
 // Past this, the session is simply cold: no timer
@@ -4979,6 +5027,8 @@ export const register: Register = on => {
     const usage = await $.session.usage()
     await update($, limits, () => usage.rateLimits.map(toLimit))
     lastMessageAt = await read($, lastMessage)
+    void pollUsage($)
+    $.clock.every(60_000, () => void pollUsage($))
     // the band only redraws when something changes: each redraw restarts the scene's animation
     $.clock.every(60_000, () => {
       void advanceIfDue($)

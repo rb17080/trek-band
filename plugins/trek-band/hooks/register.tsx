@@ -4941,8 +4941,17 @@ async function markMessage($: Host) {
 // Every second while there is a timer to show. The desktop app rebuilds the band on every update,
 // so the band reads the tick too: each rebuild then carries the scene advanced to this very second
 // (sceneAt). Left out, the app rebuilt it from its last drawing, rewinding the scene every second.
+// With no timer showing, once a minute is enough for the band's countdowns; the tick that hides
+// the timer still goes out, so its last reading never stays on screen.
+let timerShown = false
+let lastTick = 0
 async function tickCacheStatus($: Host) {
-  if (!cacheTimer(await $.clock.now())) return
+  const now = await $.clock.now()
+  const shown = cacheTimer(now) !== null
+  const due = shown || timerShown || Math.floor(now / 60000) !== Math.floor(lastTick / 60000)
+  timerShown = shown
+  if (!due) return
+  lastTick = now
   await update($, tick, n => n + 1)
 }
 
@@ -5028,7 +5037,9 @@ export const register: Register = on => {
     const shown = [
       list.find(l => l.kind === 'five_hour'),
       list.find(l => l.kind === 'seven_day'),
-    ].filter(Boolean) as Limit[]
+    ]
+      .filter(Boolean)
+      .map(l => (l!.resetsAt && Date.parse(l!.resetsAt) <= now ? { ...l!, percentUsed: 0, resetsAt: undefined, isReset: true } : l)) as (Limit & { isReset?: boolean })[]
 
     if (e.surface === 'terminal') {
       const { Box, Text } = $.ui.resolve(e)
@@ -5037,7 +5048,7 @@ export const register: Register = on => {
           {shown.map(l => (
             <Box gap={1}>
               <Text bold color={C.text}>{Math.round(l.percentUsed)}%</Text>
-              <Text color={C.dim}>{countdown(l, now)}</Text>
+              <Text color={C.dim}>{l.isReset ? '' : countdown(l, now)}</Text>
             </Box>
           ))}
         </Box>
@@ -5070,7 +5081,7 @@ export const register: Register = on => {
               />
               <Text bold color={C.text} wrap="truncate">{Math.round(l.percentUsed)}%</Text>
               <Box minWidth={countdownCells(l)} flexShrink={0}>
-                <Text color={C.dim}>{countdown(l, now)}</Text>
+                <Text color={C.dim}>{l.isReset ? '' : countdown(l, now)}</Text>
               </Box>
             </Box>
           ))}

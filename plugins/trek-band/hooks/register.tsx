@@ -4971,6 +4971,12 @@ async function pollUsage($: Host) {
       const w = body[kind]
       if (w && typeof w.utilization === 'number') next.push({ kind, percentUsed: Math.round(w.utilization * 10) / 10, resetsAt: iso(w.resets_at) })
     }
+    // per-model weekly windows (Fable): rows of the `limits` list with kind "weekly_scoped"
+    for (const row of Array.isArray(body.limits) ? body.limits : []) {
+      const model = row?.scope?.model?.display_name
+      if (row?.kind !== 'weekly_scoped' || typeof model !== 'string' || typeof row.percent !== 'number') continue
+      next.push({ kind: `seven_day_${model.toLowerCase()}`, percentUsed: Math.round(row.percent * 10) / 10, resetsAt: iso(row.resets_at) })
+    }
     await $.store.set('usage', { at: now, next: now + USAGE_EVERY_MS, backoff: 0, limits: next })
     if (next.length > 0) await update($, limits, () => next)
   } catch {
@@ -5115,6 +5121,7 @@ export const register: Register = on => {
     const shown = [
       list.find(l => l.kind === 'five_hour'),
       list.find(l => l.kind === 'seven_day'),
+      ...list.filter(l => l.kind.startsWith('seven_day_')),
     ]
       .filter(Boolean)
       .map(l => (l!.resetsAt && Date.parse(l!.resetsAt) <= now ? { ...l!, percentUsed: 0, resetsAt: undefined, isReset: true } : l)) as (Limit & { isReset?: boolean })[]

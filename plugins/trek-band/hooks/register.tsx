@@ -7152,17 +7152,27 @@ function findScene(q: string) {
 let shownAt = 0
 let rotation: { cancel: () => void } | undefined
 
-function rotateAfter($: Host) {
+const SHOW_MS = SCENE_SECONDS * ROUNDS * 1000
+
+// Starts the current scene's clock and sets the timer for the next one. When the timer fires,
+// the scene changes; it never second-guesses the timer (that check used to fire a little early,
+// give up, and leave the scene running until a once-a-minute backup caught it).
+async function rotateAfter($: Host) {
   rotation?.cancel()
-  void $.clock.now().then(t => (shownAt = t))
-  rotation = $.clock.after(SCENE_SECONDS * ROUNDS * 1000, () => void advanceIfDue($))
+  shownAt = await $.clock.now()
+  rotation = $.clock.after(SHOW_MS, () => void advance($))
 }
 
-async function advanceIfDue($: Host) {
+async function advance($: Host) {
   if (await read($, isPaused)) return
-  if ((await $.clock.now()) - shownAt < SCENE_SECONDS * ROUNDS * 1000 - 50) return
   await update($, scene, n => nextScene(n))
-  rotateAfter($)
+  await rotateAfter($)
+}
+
+// Backup only: if the timer was lost (a reload, a sleep), change scene once it is clearly overdue
+async function advanceIfOverdue($: Host) {
+  if (await read($, isPaused)) return
+  if ((await $.clock.now()) - shownAt > SHOW_MS + 1500) await advance($)
 }
 
 export const register: Register = on => {
@@ -7174,6 +7184,8 @@ export const register: Register = on => {
       argumentHint: '[scene | pause | play | list | fav <scene> | favs clear]',
     })
     favs = ((await $.store.get('favs')) as string[] | undefined) ?? []
+    // there is no pause button any more, so a pause left in the session must not freeze the scenes
+    await update($, isPaused, () => false)
     const usage = await $.session.usage()
     await update($, limits, () => usage.rateLimits.map(toLimit))
     await update($, ctx, () => ({ tokens: usage.context.tokens ?? 0, window: usage.context.window }))
@@ -7181,10 +7193,8 @@ export const register: Register = on => {
     void pollUsage($)
     $.clock.every(60_000, () => void pollUsage($))
     // the band only redraws when something changes: each redraw restarts the scene's animation
-    $.clock.every(60_000, () => {
-      void advanceIfDue($)
-    })
-    rotateAfter($)
+    $.clock.every(1000, () => void advanceIfOverdue($))
+    await rotateAfter($)
     $.clock.every(1000, () => void tickCacheStatus($))
     return next(e)
   })

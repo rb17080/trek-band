@@ -5051,6 +5051,30 @@ async function tickCacheStatus($: Host) {
   await update($, tick, n => n + 1)
 }
 
+// Favourite scenes (by name, kept across sessions); when there are any, only they rotate
+let favs: string[] = []
+function nextScene(n: number) {
+  const pool = SCENES.map((_, i) => i).filter(i => favs.length === 0 || favs.includes(SCENE_NAMES[i]))
+  if (pool.length === 0) return (n + 1) % SCENES.length
+  return pool.find(i => i > n % SCENES.length) ?? pool[0]
+}
+
+const norm = (t: string) => t.toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '')
+
+// "darmok", "inner light", "7": the scene a name or number points to
+function findScene(q: string) {
+  const n = Number(q)
+  if (Number.isInteger(n) && n >= 1 && n <= SCENES.length) return n - 1
+  const k = norm(q)
+  if (!k) return -1
+  const names = SCENE_NAMES.map(norm)
+  for (const test of [(x: string) => x === k, (x: string) => x.startsWith(k), (x: string) => x.includes(k)]) {
+    const i = names.findIndex(test)
+    if (i >= 0) return i
+  }
+  return -1
+}
+
 // The next scene comes ROUNDS plays after the current one started, however it started
 let shownAt = 0
 let rotation: { cancel: () => void } | undefined
@@ -5064,14 +5088,19 @@ function rotateAfter($: Host) {
 async function advanceIfDue($: Host) {
   if (await read($, isPaused)) return
   if ((await $.clock.now()) - shownAt < SCENE_SECONDS * ROUNDS * 1000 - 50) return
-  await update($, scene, n => (n + 1) % SCENES.length)
+  await update($, scene, n => nextScene(n))
   rotateAfter($)
 }
 
 export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'trek', description: 'Next Star Trek scene; /trek pause or /trek play to hold or resume the rotation' })
+    await $.command.register({
+      name: 'startrek',
+      description: 'Next Star Trek scene; a name or number jumps to one; pause, play, list, fav <scene>, favs clear',
+      argumentHint: '[scene | pause | play | list | fav <scene> | favs clear]',
+    })
+    favs = ((await $.store.get('favs')) as string[] | undefined) ?? []
     const usage = await $.session.usage()
     await update($, limits, () => usage.rateLimits.map(toLimit))
     await update($, ctx, () => ({ tokens: usage.context.tokens ?? 0, window: usage.context.window }))
@@ -5118,14 +5147,40 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'trek' }, async ($, e) => {
-    const arg = e.args.trim().toLowerCase()
-    if (arg === 'pause' || arg === 'play' || arg === 'resume') {
-      await update($, isPaused, () => arg === 'pause')
-      if (arg !== 'pause') rotateAfter($)
-      return { text: arg === 'pause' ? '⏸ Scene paused' : '▶ Scenes rotating again' }
+  on('command.run', { command: 'startrek' }, async ($, e) => {
+    const arg = e.args.trim()
+    const word = arg.toLowerCase()
+    if (word === 'pause' || word === 'play' || word === 'resume') {
+      await update($, isPaused, () => word === 'pause')
+      if (word !== 'pause') rotateAfter($)
+      return { text: word === 'pause' ? '⏸ Scene paused' : '▶ Scenes rotating again' }
     }
-    await update($, scene, v => (v + 1) % SCENES.length)
+    if (word === 'list') {
+      const now = await read($, scene)
+      return {
+        text: SCENE_NAMES.map((n, i) => `${i === now % SCENES.length ? '▸' : ' '} ${i + 1}. ${n}${favs.includes(n) ? ' ★' : ''}`).join('\n'),
+      }
+    }
+    if (word === 'favs clear' || word === 'fav clear' || word === 'all') {
+      favs = []
+      await $.store.set('favs', favs)
+      return { text: 'All scenes rotate again' }
+    }
+    if (word.startsWith('fav ')) {
+      const i = findScene(arg.slice(4))
+      if (i < 0) return { text: `No scene matches "${arg.slice(4)}". /startrek list shows them all.` }
+      const n = SCENE_NAMES[i]
+      favs = favs.includes(n) ? favs.filter(f => f !== n) : [...favs, n]
+      await $.store.set('favs', favs)
+      return { text: favs.length ? `★ Rotating: ${favs.join(', ')}` : 'All scenes rotate again' }
+    }
+    if (arg) {
+      const i = findScene(arg)
+      if (i < 0) return { text: `No scene matches "${arg}". /startrek list shows them all.` }
+      await update($, scene, () => i)
+    } else {
+      await update($, scene, v => nextScene(v))
+    }
     rotateAfter($)
     const n = await read($, scene)
     return { text: `🖖 ${SCENE_NAMES[n % SCENE_NAMES.length]}` }
@@ -5234,7 +5289,7 @@ export const register: Register = on => {
               plain
               dimColor
               onPress={async () => {
-                await update($, scene, v => (v + 1) % SCENES.length)
+                await update($, scene, v => nextScene(v))
                 rotateAfter($)
               }}
             />

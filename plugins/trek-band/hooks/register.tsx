@@ -6858,10 +6858,2971 @@ function yearOfHell() {
   return s
 }
 
+// ---------- Cause and Effect: "the number three" ----------
+// A quiet bridge; the Enterprise on the viewscreen. A temporal distortion opens and the
+// USS Bozeman slides out of it, on a collision course. At ops, Data (Clawd) watches his
+// readout resolve into three dots and a "3", looks round, and sees Riker's three pips
+// catch the light. Riker raises a claw: decompress the main shuttlebay. Data presses it,
+// a puff of air lifts the Enterprise, the Bozeman slips by underneath with only a soft
+// glow where the shields brush, the distortion closes and space is calm again.
+// The last frame is the first: the loop, broken, starts over.
+
+const CE_DATA: CrabHD = {
+  skin: '#e9dfbf',
+  light: '#f7f0d8',
+  shade: '#bfb38c',
+  upper: '#1c1424',
+  lower: '#c99a22',
+  lowerShade: '#9a7414',
+  legs: '#1c1424',
+  rim: '#fff6dc',
+}
+
+const CE_RIKER: CrabHD = {
+  skin: '#d97757',
+  light: '#eb9575',
+  shade: '#b85f43',
+  upper: '#1c1424',
+  lower: '#b3262e',
+  lowerShade: '#8e1d24',
+  legs: '#1c1424',
+  rim: '#f2a985',
+}
+
+// a plain rect in art pixels
+const ceR = (x: number, y: number, w: number, h: number, c: string, extra = '') =>
+  `<rect x="${x * Q}" y="${y * Q}" width="${w * Q}" height="${h * Q}" fill="${c}"${extra}/>`
+
+function ceRnd(seed: number) {
+  let s = seed
+  return () => ((s = (s * 9301 + 49297) % 233280) / 233280)
+}
+
+// one eased animation on the story timeline: keys are [seconds, value, spline into it]
+const CE_EASE = '0.42 0 0.58 1'
+function ceAnim(attr: string, keys: [number, string, string?][], tag = 'animate', extra = '') {
+  const T = SCENE_SECONDS
+  const k = [...keys]
+  if (k[0][0] > 0) k.unshift([0, k[0][1]])
+  if (k[k.length - 1][0] < T) k.push([T, k[k.length - 1][1]])
+  const kt = k.map(([t]) => +(t / T).toFixed(5))
+  kt[kt.length - 1] = 1
+  return `<${tag} attributeName="${attr}" ${extra}dur="${T}s" repeatCount="indefinite" calcMode="spline" keySplines="${k.slice(1).map(x => x[2] ?? CE_EASE).join(';')}" values="${k.map(x => x[1]).join(';')}" keyTimes="${kt.join(';')}"/>`
+}
+const ceFade = (keys: [number, number, string?][]) => ceAnim('opacity', keys.map(([t, v, sp]) => [t, String(v), sp] as [number, string, string?]))
+const ceMove = (keys: [number, number, number, string?][]) =>
+  ceAnim('transform', keys.map(([t, x, y, sp]) => [t, `${+(x * Q).toFixed(2)} ${+(y * Q).toFixed(2)}`, sp] as [number, string, string?]), 'animateTransform', 'type="translate" ')
+// a soft local glow: rises over `up` s, holds, fades over `down` s
+const ceGlow = (t: number, up: number, hold: number, down: number, peak = 1) =>
+  ceFade([[t, 0], [t + up, peak], [t + up + hold, peak], [t + up + hold + down, 0]])
+// ambient loops divide the story, with a negative begin for phase, so the restart is seamless
+const ceAmb = (vals: string, div: number, begin = 0) =>
+  `<animate attributeName="opacity" values="${vals}" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" dur="${(SCENE_SECONDS / div).toFixed(4)}s" begin="${(-begin).toFixed(3)}s" repeatCount="indefinite"/>`
+
+// eyes that glance one pixel at a time: keys [t, dx, dy] -> windows per position
+type CeGaze = [number, number, number][]
+function ceGazePlan(keys: CeGaze) {
+  const T = SCENE_SECONDS
+  const out: [number, number, number, number][] = []
+  let pos: [number, number] = [keys[0][1], keys[0][2]]
+  let start = 0
+  for (const [tk, gx, gy] of keys.slice(1)) {
+    out.push([start, tk, pos[0], pos[1]])
+    start = tk
+    while (pos[0] !== gx || pos[1] !== gy) {
+      pos = [pos[0] + Math.sign(gx - pos[0]), pos[1] + Math.sign(gy - pos[1])]
+      if (pos[0] === gx && pos[1] === gy) break
+      out.push([start, start + 0.08, pos[0], pos[1]])
+      start = +(start + 0.08).toFixed(3)
+    }
+  }
+  out.push([start, T, pos[0], pos[1]])
+  return out
+}
+
+function ceInter(a: [number, number][], b: [number, number][]) {
+  const out: [number, number][] = []
+  for (const [a0, a1] of a) for (const [b0, b1] of b) {
+    const lo = Math.max(a0, b0)
+    const hi = Math.min(a1, b1)
+    if (hi > lo) out.push([lo, hi])
+  }
+  return out
+}
+
+// a crab whose eyes follow a gaze plan and blink on cue
+function ceCrab(
+  k: CrabHD, x: number, y: number, look: Side,
+  gaze: CeGaze, blinks: [number, number][],
+  eye: (p: Pix, ex: number, ey: number, dx: number) => void,
+  shut: string,
+  details: (p: Pix) => void,
+  shutRow = 4,
+) {
+  const T = SCENE_SECONDS
+  const { p } = clawdBody(k, x, y, look)
+  p.rect(x + 3, y + 1, 12, 4, k.skin)
+  details(p)
+  let s = p.svg()
+  s += armRestHD(k, x, y, 'left') + armRestHD(k, x, y, 'right')
+  const open = complement(merge(blinks), T)
+  const by = new Map<string, [number, number][]>()
+  for (const [a, b, dx, dy] of ceGazePlan(gaze)) {
+    const key = `${dx},${dy}`
+    if (!by.has(key)) by.set(key, [])
+    by.get(key)!.push([a, b])
+  }
+  for (const [key, w] of by) {
+    const [dx, dy] = key.split(',').map(Number)
+    const e = new Pix()
+    for (const ex of [5, 11]) eye(e, x + ex + dx, y + 2 + dy, dx)
+    s += shown(e.svg(), ceInter(merge(w), open), T)
+    const c = new Pix()
+    for (const ex of [5, 11]) c.rect(x + ex + dx, y + shutRow + dy, 2, 1, shut)
+    const bw = ceInter(merge(w), merge(blinks))
+    if (bw.length) s += shown(c.svg(), bw, T)
+  }
+  return s
+}
+
+// a raised claw that rises smoothly out of the shoulder (clipped at the shoulder line)
+// keys: [seconds, rows still hidden (0 = fully up, 12 = down), spline]
+function ceArmRise(id: string, k: CrabHD, x: number, y: number, side: Side, keys: [number, number, string?][]) {
+  const cx = side === 'left' ? x - 5 : x + 17
+  return `<clipPath id="${id}"><rect x="${cx * Q}" y="${(y - 9) * Q}" width="${7 * Q}" height="${13 * Q}"/></clipPath><g clip-path="url(#${id})"><g transform="translate(0 ${12 * Q})">${armUpHD(k, x, y, side)}${ceAnim('transform', keys.map(([t, r, sp]) => [t, `0 ${r * Q}`, sp] as [number, string, string?]), 'animateTransform', 'type="translate" ')}</g></g>`
+}
+
+// screen content area, in art pixels
+const CE_SX = 34
+const CE_SY = 2
+const CE_SW = 53
+const CE_SH = 23
+
+// the Enterprise-D, side on, facing left (24 x 9; top-left at 0,0)
+function ceEnterprise() {
+  const pal: Record<string, string> = {
+    b: '#f0f2f8', w: '#e2e4ee', W: '#c5c8d6', o: '#ffe6a0', g: '#8d90a3', h: '#aeb1c1', H: '#9598aa',
+    k: '#5d6074', d: '#ffb45a', D: '#e0803a', r: '#e0503a', n: '#d0d3df', N: '#7cc4ff', p: '#8d90a3',
+  }
+  const rows = [
+    '....bw..................',
+    '.wwwwwwwwwww............',
+    'WWoWWoWWoWWoWW..........',
+    '.ggggggggggggg...rnnnnnn',
+    '......kHHHk.....hNNNNNNk',
+    '.......hhh.....pp.......',
+    '.....dhhhhhhhhhhhhhh....',
+    '.....DHHHHHHHoHHHHHHh...',
+    '......kkkkkkkkkkkkkk....',
+  ]
+  let s = new Pix().rows(rows, 0, 0, pal).svg()
+  // the nacelle glow breathes very slightly
+  s += `<g>${new Pix().rect(17, 4, 6, 1, '#b4e0ff').svg()}${ceAmb('0.25;0.7;0.25', 6, 0.7)}</g>`
+  return s
+}
+
+// the USS Bozeman (Soyuz class), side on, facing right (18 x 7; top-left at 0,0)
+function ceBozeman() {
+  const pal: Record<string, string> = {
+    x: '#a49e92', s: '#ddd7cc', S: '#c3bdb1', o: '#ffe6a0', g: '#8e897f', k: '#69655d', m: '#b2ac9f',
+    M: '#8f897d', p: '#7c776d', n: '#c8c2b6', N: '#8ab8ff', r: '#d9563f', R: '#b8402e',
+  }
+  const rows = [
+    '.mm.....xxxx......',
+    'mmmm...x....x.....',
+    'MMMMm.sssssssss...',
+    'mMMMMSSoSSoSSoSSS.',
+    '..kkkgggggggggggk.',
+    '..p.......p.......',
+    'nnnnnnnnnnnr......',
+    'NNNNNNNNNNR.......',
+  ]
+  return new Pix().rows(rows, 0, 0, pal).svg()
+}
+
+// the temporal distortion: a pale blue vertical swirl with slow ripples
+function ceDistortion() {
+  const T = SCENE_SECONDS
+  let arms = ''
+  const seg = (base: number, t0: number, t1: number) => {
+    const pts: string[] = []
+    for (let t = t0; t <= t1 + 0.001; t += 0.2) {
+      const r = 3 + t * 2.4
+      pts.push(`${(r * Math.cos(base + t)).toFixed(1)},${(r * Math.sin(base + t)).toFixed(1)}`)
+    }
+    return pts.join(' ')
+  }
+  const bands: [number, number, number, string, number][] = [
+    [0, 1.8, 2.2, '#e4f6ff', 0.7],
+    [1.8, 3.6, 1.8, '#a8dcff', 0.55],
+    [3.6, 5.4, 1.4, '#6fb0f0', 0.42],
+    [5.4, 6.6, 1.0, '#4c86d0', 0.3],
+  ]
+  for (let a = 0; a < 3; a++) {
+    const base = (a * 2 * Math.PI) / 3
+    for (const [t0, t1, w, c, o] of bands) arms += `<polyline points="${seg(base, t0, t1)}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" opacity="${o}"/>`
+  }
+  // ripples: three thin rings widening and fading, one after another
+  let rings = ''
+  const RD = T / 6
+  for (let i = 0; i < 3; i++) {
+    const b = (-i * RD / 3).toFixed(3)
+    rings += `<ellipse rx="4" ry="6" fill="none" stroke="#bfe8ff" stroke-width="1" opacity="0"><animate attributeName="rx" values="4;20" dur="${RD.toFixed(4)}s" begin="${b}s" repeatCount="indefinite"/><animate attributeName="ry" values="6;26" dur="${RD.toFixed(4)}s" begin="${b}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.45;0" keyTimes="0;0.25;1" dur="${RD.toFixed(4)}s" begin="${b}s" repeatCount="indefinite"/></ellipse>`
+  }
+  return (
+    `<ellipse rx="30" ry="38" fill="url(#ceDistGlow)"/>` +
+    rings +
+    `<g transform="scale(0.62 1)"><g>${arms}<animateTransform attributeName="transform" type="rotate" values="0;360" dur="${(T / 3).toFixed(4)}s" repeatCount="indefinite"/></g></g>` +
+    `<ellipse rx="3" ry="8" fill="#d8f2ff" opacity="0.55"/><ellipse rx="1.5" ry="5" fill="#f2fbff" opacity="0.7"/>`
+  )
+}
+
+function causeAndEffect() {
+  const T = SCENE_SECONDS
+  const W = GW * Q
+  const H = GH * Q
+
+  // ---- the beat sheet (authored seconds; played = x 0.5824)
+  const distOpen: [number, number] = [2.8, 5.0]
+  const bozIn = 3.6 // the Bozeman slides out of the distortion
+  const bozOut = 6.0
+  const dots = [6.2, 6.8, 7.4] // three dots on Data's readout
+  const three = 7.6 // ... and a "3"
+  const pips = [7.9, 8.3, 8.7] // Riker's three pips catch the light
+  const clawUp = 8.7 // Riker: "decompress the main shuttlebay"
+  const press: [number, number] = [9.0, 9.9] // Data presses it
+  const puff = 9.2
+  const lift: [number, number] = [9.2, 10.5] // the Enterprise rises out of the way
+  const pass: [number, number] = [10.4, 14.6] // the Bozeman slips by underneath
+  const brush = 10.75 // shields brush: a soft local glow
+  const clawDown = 12.2
+  const readOff: [number, number] = [12.8, 14.2]
+  const distClose: [number, number] = [13.0, 15.0]
+  const settle: [number, number] = [13.6, 15.8]
+
+  let s = `<defs>
+    <linearGradient id="ceFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="ceFade"><rect x="-10" y="-10" width="${W + 20}" height="${H + 20}" fill="url(#ceFadeG)"/></mask>
+    <linearGradient id="ceFadeCG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0.15"/><stop offset="0.12" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="ceFadeC"><rect x="-10" y="-10" width="${W + 20}" height="${H + 20}" fill="url(#ceFadeCG)"/></mask>
+    <linearGradient id="ceWall" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#18131f"/><stop offset="1" stop-color="#322639"/></linearGradient>
+    <linearGradient id="ceSpace" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#04050c"/><stop offset="1" stop-color="#0a0c1c"/></linearGradient>
+    <radialGradient id="ceNeb"><stop offset="0" stop-color="#4f78c8" stop-opacity="0.16"/><stop offset="1" stop-color="#4f78c8" stop-opacity="0"/></radialGradient>
+    <radialGradient id="ceDistGlow"><stop offset="0" stop-color="#bfe6ff" stop-opacity="0.5"/><stop offset="0.45" stop-color="#6aa8ec" stop-opacity="0.22"/><stop offset="1" stop-color="#3a64b0" stop-opacity="0"/></radialGradient>
+    <radialGradient id="ceSpill"><stop offset="0" stop-color="#8cc4ff" stop-opacity="0.2"/><stop offset="1" stop-color="#8cc4ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="ceWarm"><stop offset="0" stop-color="#ffcf9a" stop-opacity="0.1"/><stop offset="1" stop-color="#ffcf9a" stop-opacity="0"/></radialGradient>
+    <radialGradient id="ceSoft"><stop offset="0" stop-color="#e2f4ff" stop-opacity="0.85"/><stop offset="0.5" stop-color="#a8d8ff" stop-opacity="0.35"/><stop offset="1" stop-color="#a8d8ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="cePip"><stop offset="0" stop-color="#fff3b0" stop-opacity="0.8"/><stop offset="1" stop-color="#ffe27a" stop-opacity="0"/></radialGradient>
+    <radialGradient id="ceKey"><stop offset="0" stop-color="#bfe4ff" stop-opacity="0.7"/><stop offset="1" stop-color="#7cc4ff" stop-opacity="0"/></radialGradient>
+    <pattern id="ceScan" width="4" height="4" patternUnits="userSpaceOnUse"><rect y="2" width="4" height="2" fill="#000" opacity="0.08"/></pattern>
+    <clipPath id="ceScreen"><rect x="${CE_SX * Q}" y="${CE_SY * Q}" width="${CE_SW * Q}" height="${CE_SH * Q}"/></clipPath>
+  </defs>`
+
+  // ---- the bridge, fading in from the band on the left
+  let back = `<rect x="-6" y="-6" width="${W + 12}" height="${H + 12}" fill="url(#ceWall)"/>`
+  back += ceR(0, 0, GW, 2, '#120d17') + ceR(0, 1, GW, 1, '#ffd9a0', ' opacity="0.28"')
+  back += `<ellipse cx="${18 * Q}" cy="${16 * Q}" rx="60" ry="40" fill="url(#ceWarm)"/>`
+  // wall ribs on the far left
+  const rib = new Pix()
+  for (const x of [4, 12]) rib.rect(x, 3, 1, 26, '#251c2e').rect(x + 1, 3, 1, 26, '#3a2e44')
+  back += rib.svg()
+  // the ops readout panel: LCARS frame and a dark display
+  const lc = new Pix()
+  lc.rect(19, 3, 14, 20, '#0b0910')
+  lc.rect(20, 4, 12, 2, '#f29a3a').rect(20, 6, 2, 14, '#f29a3a').set(20, 4, '#0b0910').set(31, 4, '#c9a7ff')
+  lc.rect(20, 20, 12, 1, '#b48fd6').rect(20, 17, 2, 1, '#0b0910').rect(20, 18, 2, 2, '#c39be0')
+  lc.rect(23, 7, 9, 12, '#05070d').rect(23, 7, 9, 1, '#141a26')
+  // a faint sensor trace along the bottom of the display
+  ;[[23, 17], [24, 17], [25, 16], [26, 17], [27, 17], [28, 16], [29, 17], [30, 17], [31, 16]].forEach(([x, y]) => lc.set(x, y, '#20405a'))
+  back += lc.svg()
+  ;[[23, 21, 5], [26, 21, 7], [29, 21, 6]].forEach(([x, y, d], i) => {
+    back += `<g>${ceR(x, y, 2, 1, i === 1 ? '#8aa7e8' : '#f7c487')}${ceAmb('1;0.45;1', d, i * 0.7)}</g>`
+  })
+  // wood trim, baseboard, carpet
+  const wall = new Pix()
+  wall.rect(0, 29, GW, 2, '#5e3f2c').rect(0, 29, GW, 1, '#8a6040')
+  wall.rect(0, 33, GW, 1, '#0f0b13')
+  wall.rect(0, 34, GW, 14, '#1d1724').rect(0, 34, GW, 1, '#2c2236')
+  wall.rect(0, 38, GW, 1, '#221b2a').rect(58, 43, GW - 58, 1, '#19141f')
+  for (let x = 2; x < GW; x += 9) wall.rect(x, 31, 1, 2, '#2a2030')
+  back += wall.svg()
+  // the distortion's pale blue light on the wall and floor
+  back += `<g opacity="0"><ellipse cx="${48 * Q}" cy="${31 * Q}" rx="86" ry="20" fill="url(#ceSpill)"/>${ceFade([[distOpen[0], 0], [distOpen[1], 1], [distClose[0], 1], [distClose[1], 0]])}</g>`
+  s += `<g mask="url(#ceFade)">${back}</g>`
+
+  // ---- the pattern on Data's readout: three dots, then a 3
+  const dotArt = (x: number) => new Pix().rect(x, 9, 2, 2, '#e8c547').set(x, 9, '#fff3b0').svg()
+  ;[24, 27, 30].forEach((x, i) => {
+    s += `<g opacity="0">${dotArt(x)}${ceFade([[dots[i], 0], [dots[i] + 0.45, 1], [readOff[0] + i * 0.15, 1], [readOff[1], 0]])}</g>`
+    s += `<g opacity="0"><circle cx="${(x + 1) * Q}" cy="${10 * Q}" r="5" fill="url(#cePip)"/>${ceGlow(dots[i], 0.45, 0.1, 0.9, 0.7)}</g>`
+  })
+  const glyph = new Pix().rows(['xxxx', '...x', '.xxx', '...x', 'xxxx'], 26, 12, { x: '#8fd0ff' })
+  s += `<g opacity="0">${glyph.svg()}${ceFade([[three, 0], [three + 0.5, 1], [readOff[0], 1], [readOff[1], 0]])}</g>`
+
+  // ---- the viewscreen
+  const bez = new Pix()
+  bez.rect(33, 1, 55, 25, '#0e0b12').rect(34, 1, 53, 1, '#4a4152').rect(33, 2, 1, 23, '#2a2330').rect(87, 2, 1, 23, '#2a2330')
+  bez.rect(34, 25, 53, 1, '#3a3142')
+  s += bez.svg()
+
+  let scr = `<rect x="${CE_SX * Q}" y="${CE_SY * Q}" width="${CE_SW * Q}" height="${CE_SH * Q}" fill="url(#ceSpace)"/>`
+  scr += `<ellipse cx="${74 * Q}" cy="${20 * Q}" rx="56" ry="18" fill="url(#ceNeb)"/>`
+  const rnd = ceRnd(87)
+  for (let y = CE_SY; y < CE_SY + CE_SH; y += 2) {
+    for (let x = CE_SX; x < CE_SX + CE_SW; x += 3) {
+      if (rnd() < 0.7) continue
+      const jx = x + Math.floor(rnd() * 3)
+      scr += ceR(jx, y, 1, 1, '#c8d4f0', ` opacity="${(0.15 + rnd() * 0.35).toFixed(2)}"`)
+    }
+  }
+  ;[[38, 4], [56, 22], [84, 3], [52, 5], [80, 22]].forEach(([x, y], i) => {
+    const glow = new Pix().set(x - 1, y, '#a8bce8').set(x + 1, y, '#a8bce8').set(x, y - 1, '#a8bce8').set(x, y + 1, '#a8bce8')
+    scr += `<g>${glow.svg()}${ceAmb('0.15;0.7;0.15', [6, 5, 4, 6, 5][i], i * 0.6)}</g>`
+    scr += `<g>${new Pix().set(x, y, '#f2f4ff').svg()}${ceAmb('0.6;1;0.6', [6, 5, 4, 6, 5][i], i * 0.6)}</g>`
+  })
+
+  // the distortion: opens out of nothing, swirls, closes calmly
+  const dx = 45
+  const dy = 15
+  const distScale = ceAnim('transform', [[distOpen[0], '0.05'], [distOpen[1], '1'], [distClose[0], '1'], [distClose[1], '0.05']], 'animateTransform', 'type="scale" ')
+  scr += `<g transform="translate(${dx * Q} ${dy * Q})"><g>${distScale}<g opacity="0">${ceFade([[distOpen[0], 0], [distOpen[0] + 1.6, 1], [distClose[0] + 0.5, 1], [distClose[1], 0]])}${ceDistortion()}</g></g></g>`
+
+  // the Enterprise: holds station, lifts on the decompression, settles back
+  const ex = 62
+  const ey = 10
+  scr += `<g transform="translate(${ex * Q} ${ey * Q})"><g>${ceMove([[lift[0], 0, 0], [lift[1], 0, -6], [settle[0], 0, -6], [settle[1], 0, 0]])}${ceEnterprise()}</g></g>`
+
+  // the decompression: a puff of air from the main shuttlebay, drifting aft and thinning
+  const bayX = 74
+  const bayY = 11
+  const prnd = ceRnd(9)
+  for (let i = 0; i < 6; i++) {
+    const tx = 3 + prnd() * 7
+    const ty = -2 - prnd() * 4
+    const t0 = puff + i * 0.08
+    const r0 = 1
+    const r1 = 2.2 + prnd() * 1.6
+    scr += `<g transform="translate(${bayX * Q} ${bayY * Q})"><circle r="${r0}" fill="#e8f0fa" opacity="0">${ceFade([[t0, 0], [t0 + 0.45, 0.7], [t0 + 1.0, 0.55], [t0 + 2.3, 0]])}${ceAnim('r', [[t0, String(r0)], [t0 + 2.3, r1.toFixed(1)], [t0 + 2.4, String(r0)]])}${ceMove([[t0, 0, 0], [t0 + 2.3, tx, ty, '0.2 0.6 0.4 1'], [t0 + 2.4, 0, 0, '0 0 1 1']])}</circle></g>`
+  }
+
+  // the Bozeman: out of the distortion, creeping on, then slipping past underneath
+  const bz = ceBozeman()
+  const bozMove = ceMove([
+    [bozIn, 44, 17],
+    [bozOut, 46, 17],
+    [9.4, 48, 17, '0 0 1 1'],
+    [pass[0], 54, 17, '0.5 0 1 1'],
+    [pass[1], 104, 17, '0 0 1 1'],
+    [pass[1] + 0.1, 44, 17, '0 0 1 1'],
+  ])
+  const bozScale = ceAnim('transform', [[bozIn, '0.15'], [bozOut, '1'], [pass[1], '1'], [pass[1] + 0.1, '0.15', '0 0 1 1']], 'animateTransform', 'type="scale" ')
+  scr += `<g opacity="0">${ceFade([[bozIn, 0], [bozIn + 0.9, 1], [13.4, 1], [14.2, 0]])}<g>${bozMove}<g>${bozScale}<g transform="translate(${-9 * Q} ${-3 * Q})">${bz}</g></g></g></g>`
+
+  // where the shields brush: a small soft glow, no more
+  scr += `<g opacity="0"><ellipse cx="${66 * Q}" cy="${13.5 * Q}" rx="9" ry="5" fill="url(#ceSoft)"/>${ceGlow(brush, 0.45, 0.1, 1.1, 0.9)}</g>`
+  scr += `<g opacity="0"><path d="M${58 * Q} ${12.5 * Q} Q ${66 * Q} ${14.5 * Q} ${76 * Q} ${12.5 * Q}" fill="none" stroke="#bfe6ff" stroke-width="1"/>${ceGlow(brush - 0.05, 0.45, 0.1, 1.0, 0.45)}</g>`
+
+  scr += `<rect x="${CE_SX * Q}" y="${CE_SY * Q}" width="${CE_SW * Q}" height="${CE_SH * Q}" fill="url(#ceScan)"/>`
+  scr += `<polygon points="${36 * Q},${2 * Q} ${42 * Q},${2 * Q} ${36 * Q},${8 * Q}" fill="#ffffff" opacity="0.05"/>`
+  s += `<g clip-path="url(#ceScreen)">${scr}</g>`
+
+  // ---- Data at ops
+  const dX = 12
+  const dY = 25
+  const dataEye = (p: Pix, x: number, y: number, ddx: number) => {
+    p.rect(x, y, 2, 3, '#e8b818').set(x, y, '#f6d84a').set(x + 1, y, '#f6d84a')
+    p.rect(ddx < 0 ? x : x + 1, y + 1, 1, 2, '#3a2a08')
+  }
+  s += ceCrab(
+    CE_DATA, dX, dY, 'right',
+    // the screen, the readout above him, Riker, the console, the screen again
+    [[0, 1, -1], [6.0, 0, -1], [7.6, 1, 0], [8.95, 1, 1], [10.0, 1, -1]],
+    [[4.6, 4.72], [15.2, 15.32]],
+    dataEye, '#6a5a2a',
+    p => {
+      // black hair slicked back, a widow's peak
+      p.rect(dX + 1, dY - 1, 16, 1, '#141018').rect(dX + 5, dY - 1, 6, 1, '#2e2a3a')
+      p.rect(dX, dY, 18, 1, '#141018').rect(dX + 3, dY, 4, 1, '#3a3448').rect(dX + 8, dY + 1, 2, 1, '#141018')
+      p.set(dX, dY + 1, '#141018').set(dX + 17, dY + 1, '#141018')
+      // combadge; two full pips and a hollow one
+      p.rect(dX + 4, dY + 6, 2, 2, '#e8c547').set(dX + 4, dY + 6, '#fff3b0')
+      p.set(dX + 10, dY + 6, '#e8c547').set(dX + 12, dY + 6, '#e8c547').set(dX + 14, dY + 6, '#7a6a2a')
+    },
+  )
+  // the ops console in front of him (kept short so the title corner stays plain)
+  const con = new Pix()
+  con.rect(5, 35, 32, 1, '#9a8fa6').rect(4, 36, 34, 1, '#0b0910').rect(5, 35, 1, 1, '#5b5266')
+  con.rect(6, 36, 4, 1, '#f29a3a').rect(11, 36, 3, 1, '#8aa7e8').rect(15, 36, 5, 1, '#c39be0').rect(21, 36, 3, 1, '#f7c487').rect(26, 36, 3, 1, '#c39be0')
+  con.rect(4, 37, 34, 4, '#4a3020').rect(4, 37, 34, 1, '#7a5236').rect(4, 40, 34, 1, '#2e1e14')
+  for (const x of [11, 19, 27]) con.rect(x, 38, 1, 2, '#33221a')
+  s += `<g mask="url(#ceFadeC)">${con.svg()}</g>`
+  // his claw reaches down onto the console and presses (slides down out of the shoulder)
+  const prPal = { S: CE_DATA.skin, s: CE_DATA.shade, L: CE_DATA.light }
+  const prTop = new Pix().rows(['SSS', 'sSSS'], dX + 18, dY + 4, prPal)
+  const pr = new Pix().rows(['.sSS...', '..SS...', '..SSs..', '.LSSSL.', '.S...S.'], dX + 18, dY + 6, prPal)
+  const IN = '0.55 0 0.85 0.4'
+  s += shown(prTop.svg(), [[press[0] - 0.1, press[1] + 0.4]], T)
+  s += `<clipPath id="cePressClip"><rect x="${(dX + 18) * Q}" y="${(dY + 6) * Q}" width="${7 * Q}" height="${5 * Q}"/></clipPath><g clip-path="url(#cePressClip)"><g transform="translate(0 ${-5 * Q})">${pr.svg()}${ceMove([[press[0], 0, -5], [press[0] + 0.4, 0, 0, IN], [press[1], 0, 0], [press[1] + 0.35, 0, -5]])}</g></g>`
+  // the shuttlebay key: lights softly when pressed
+  s += ceR(32, 36, 3, 1, '#3a6a9a')
+  s += `<g opacity="0">${ceR(32, 36, 3, 1, '#9cd4ff')}<ellipse cx="${33.5 * Q}" cy="${36.5 * Q}" rx="7" ry="3" fill="url(#ceKey)"/>${ceFade([[press[0] + 0.3, 0], [press[0] + 0.75, 1], [press[1] + 0.6, 1], [press[1] + 1.6, 0]])}</g>`
+
+  // ---- Riker, standing before the screen, facing Data
+  const rX = 66
+  const rY = 28
+  const hair = '#3b2518'
+  const hairHi = '#5e3a26'
+  s += ceCrab(
+    CE_RIKER, rX, rY, 'left',
+    [[0, -1, -1], [7.7, -1, 0], [9.5, -1, -1]],
+    [[1.6, 1.75], [12.9, 13.05]],
+    (p, x, y) => p.rect(x, y, 2, 2, EYE_HD),
+    EYE_HD,
+    p => {
+      p.rect(rX + 2, rY - 1, 14, 1, hair).set(rX + 6, rY - 1, hairHi).set(rX + 11, rY - 1, hairHi)
+      p.rect(rX + 1, rY, 3, 1, hair).rect(rX + 14, rY, 3, 1, hair).set(rX + 8, rY, hair).set(rX + 9, rY, hair)
+      // sideburns into a full beard
+      p.rect(rX, rY + 1, 1, 4, hair).rect(rX + 17, rY + 1, 1, 4, hair)
+      p.rect(rX + 1, rY + 4, 2, 1, hair).rect(rX + 15, rY + 4, 2, 1, hair)
+      p.rect(rX, rY + 5, 18, 1, hair).rect(rX + 7, rY + 5, 4, 1, '#4a2c1c')
+      p.set(rX + 3, rY + 5, hairHi).set(rX + 14, rY + 5, hairHi)
+      // combadge and three pips
+      p.rect(rX + 12, rY + 7, 2, 2, '#e8c547').set(rX + 12, rY + 7, '#fff3b0')
+      p.set(rX + 2, rY + 6, '#e8c547').set(rX + 4, rY + 6, '#e8c547').set(rX + 6, rY + 6, '#e8c547')
+    },
+    3,
+  )
+  // the pips catch the light, one, two, three
+  ;[2, 4, 6].forEach((c, i) => {
+    s += `<g opacity="0"><circle cx="${(rX + c + 0.5) * Q}" cy="${(rY + 6.5) * Q}" r="4" fill="url(#cePip)"/>${ceR(rX + c, rY + 6, 1, 1, '#fffbe0')}${ceGlow(pips[i], 0.4, 0.2, 0.9)}</g>`
+  })
+  s += ceArmRise('ceRikerArm', CE_RIKER, rX, rY, 'left', [[clawUp, 12], [clawUp + 0.5, 0, '0.25 0.6 0.4 1'], [clawDown, 0], [clawDown + 0.5, 12, '0.5 0 0.75 0.6']])
+
+  return s
+}
+
+// ---------- Relics: "No bloody A, B, C or D." ----------
+// Scotty asks the holodeck for the old ship, NCC-1701, and stands alone on the round
+// bridge he served on: the viewscreen, the red rail, the jewel-button consoles, the
+// captain's chair. He looks round, takes a sip of the green Aldebaran whiskey and
+// raises his glass to the empty bridge.
+// One 17.17 s story, played once (played seconds = authored x 0.582):
+//  0.0 - 2.8   calm: Scotty by the rail, glass at his side, looking up at the viewscreen
+//  2.8 - 5.8   he looks round the stations, then strolls over toward the captain's chair
+//  5.8 - 9.0   a long, slow sip, eyes closed
+//  9.0 - 13.4  he looks up at the screen and raises his glass to the old girl; a small nod
+// 13.4 - 17.17 glass down, he strolls back, looking round once more: the opening shot
+
+const RL_T = SCENE_SECONDS
+const RL_EASE = '0.45 0 0.55 1'
+const RL_X0 = 22 // Scotty's body, at the start and the end
+const RL_Y = 28
+const RL_WALK = 14 // how far he strolls (art px)
+
+const RL_SC = {
+  skin: '#d97757', light: '#eb9575', shade: '#b85f43', rim: '#f6a77c',
+  red: '#c8322c', redLight: '#e2564a', redDark: '#8e1f1e',
+  black: '#17121e', blackL: '#2e2638',
+  gold: '#e8c547', goldL: '#fff3b0',
+  hair: '#c3bfca', hairL: '#efedf3', hairD: '#8a8594',
+}
+const RL_GLASS = { r: '#c4dde2', s: '#9fb6bc', w: '#e6f8f8', L: '#a6f2b4', g: '#3cc860', d: '#22844a' }
+
+const rlKt = (ts: number[]) => ts.map(t => +(t / RL_T).toFixed(5)).join(';')
+
+// a smooth eased move on the story timeline: [t, x, y] in art px, held flat between keys
+function rlTrack(pts: [number, number, number][], spline = RL_EASE) {
+  const list = [...pts]
+  if (list[0][0] > 0) list.unshift([0, list[0][1], list[0][2]])
+  const last = list[list.length - 1]
+  if (last[0] < RL_T) list.push([RL_T, last[1], last[2]])
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${RL_T}s" repeatCount="indefinite" values="${list.map(p => `${+(p[1] * Q).toFixed(2)} ${+(p[2] * Q).toFixed(2)}`).join(';')}" keyTimes="${rlKt(list.map(p => p[0]))}" keySplines="${list.slice(1).map(() => spline).join(';')}"/>`
+}
+
+// a gentle lift on every step of a walk (amp in art px, phase 0 or 0.5 of a step)
+function rlBob(walks: [number, number, number][], amp: number, phase: number) {
+  const pts: [number, number, number][] = [[0, 0, 0]]
+  for (const [a, b, step] of walks) {
+    for (let t = a + phase * step; t + step <= b + 0.001; t += step) {
+      pts.push([+t.toFixed(3), 0, 0], [+(t + step / 2).toFixed(3), 0, -amp], [+(t + step).toFixed(3), 0, 0])
+    }
+  }
+  return rlTrack(pts, '0.45 0 0.55 1')
+}
+
+function rlInter(a: [number, number][], b: [number, number][]) {
+  const out: [number, number][] = []
+  for (const [a0, a1] of a) for (const [b0, b1] of b) {
+    const lo = Math.max(a0, b0)
+    const hi = Math.min(a1, b1)
+    if (hi > lo) out.push([lo, hi])
+  }
+  return out
+}
+
+function rlLine(x0: number, y0: number, x1: number, y1: number) {
+  const pts: [number, number][] = []
+  const dx = Math.abs(x1 - x0)
+  const dy = -Math.abs(y1 - y0)
+  const sx = x0 < x1 ? 1 : -1
+  const sy = y0 < y1 ? 1 : -1
+  let err = dx + dy
+  for (;;) {
+    pts.push([x0, y0])
+    if (x0 === x1 && y0 === y1) break
+    const e2 = 2 * err
+    if (e2 >= dy) (err += dy), (x0 += sx)
+    if (e2 <= dx) (err += dx), (y0 += sy)
+  }
+  return pts
+}
+
+// a slow blinking console light: on, then dim, n times per story
+function rlBlink(px: string, n: number, off: number) {
+  const d = +(RL_T / n).toFixed(5)
+  return `<g>${px}<animate attributeName="opacity" calcMode="discrete" values="1;0.2" keyTimes="0;0.5" dur="${d}s" begin="${(-off * d).toFixed(3)}s" repeatCount="indefinite"/></g>`
+}
+
+function relics() {
+  const T = RL_T
+  const W = GW * Q
+  const H = GH * Q
+  let seed = 1701
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
+
+  // the viewscreen interior
+  const VX = 38, VY = 3, VW = 33, VH = 13
+
+  let s = `<defs>
+    <linearGradient id="rlFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="rlFade"><rect width="${W}" height="${H}" fill="url(#rlFadeG)"/></mask>
+    <clipPath id="rlFloor"><rect x="0" y="${24 * Q}" width="${W}" height="${24 * Q}"/></clipPath>
+    <clipPath id="rlScr"><rect x="${VX * Q}" y="${VY * Q}" width="${VW * Q}" height="${VH * Q}"/></clipPath>
+    <radialGradient id="rlScreenGlow"><stop offset="0" stop-color="#7aa8ff" stop-opacity="0.16"/><stop offset="1" stop-color="#7aa8ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="rlWarm"><stop offset="0" stop-color="#ffd6a0" stop-opacity="0.12"/><stop offset="1" stop-color="#ffd6a0" stop-opacity="0"/></radialGradient>
+    <radialGradient id="rlSci"><stop offset="0" stop-color="#6aa8ff" stop-opacity="0.5"/><stop offset="1" stop-color="#6aa8ff" stop-opacity="0"/></radialGradient>
+    <linearGradient id="rlShadeG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#120e18" stop-opacity="0"/><stop offset="1" stop-color="#120e18" stop-opacity="0.55"/></linearGradient>
+  </defs>`
+
+  // ================= the round bridge, faded in from the band on the left =================
+  const room = new Pix()
+  // ceiling ring and the top trim
+  room.rect(0, 0, GW, 2, '#18141f').rect(0, 1, GW, 1, '#221d2b')
+  room.rect(0, 2, GW, 1, '#4a4458')
+  // the bulkhead wall around the bridge
+  room.rect(0, 3, GW, 6, '#3a3446')
+  room.rect(0, 9, GW, 1, '#5a546c')
+  // the monitor band: a screen over every station, each with its own little readout
+  const mon = (x: number, kind: number) => {
+    room.rect(x - 1, 3, 8, 6, '#141118').rect(x - 1, 8, 8, 1, '#4c4658')
+    const bg = ['#1f4fa8', '#1a5e36', '#9a5a18', '#5e2462', '#16606e', '#7a1e22'][kind]
+    const fg = ['#e8f0ff', '#62e08a', '#ffc860', '#f08ad8', '#8af0f0', '#ff8a6a'][kind]
+    room.rect(x, 4, 6, 4, bg)
+    if (kind === 0) room.rect(x + 1, 5, 3, 1, fg).rect(x + 1, 6, 4, 1, fg).set(x + 5, 5, '#ffd060')
+    if (kind === 1) room.set(x + 2, 4, fg).set(x + 1, 5, fg).set(x + 3, 5, fg).set(x + 2, 6, fg).set(x + 4, 6, fg).set(x + 3, 7, fg).set(x + 5, 5, fg)
+    if (kind === 2) for (let i = 0; i < 6; i += 2) room.rect(x + i, 4, 1, 4, fg).rect(x, 5 + (i % 4) / 2, 6, 1, fg)
+    if (kind === 3) room.set(x, 6, fg).set(x + 1, 5, fg).set(x + 2, 5, fg).set(x + 3, 6, fg).set(x + 4, 7, fg).set(x + 5, 6, fg)
+    if (kind === 4) room.rect(x + 1, 6, 1, 2, fg).rect(x + 2, 5, 1, 3, fg).rect(x + 3, 4, 1, 4, fg).rect(x + 4, 6, 1, 2, fg)
+    if (kind === 5) room.rect(x + 1, 5, 4, 2, fg).set(x + 2, 5, '#ffe0c0').rect(x, 4, 6, 1, '#a8302a')
+  }
+  ;[[2, 4], [10, 2], [18, 0], [27, 3], [75, 1], [83, 5]].forEach(([x, kd]) => mon(x, kd))
+  // the station consoles under the screens: jewel buttons on the sloped panel, then the dark front
+  const consoleRun = (x0: number, x1: number) => {
+    room.rect(x0, 10, x1 - x0, 1, '#6e6884')
+    room.rect(x0, 11, x1 - x0, 3, '#28232f')
+    room.rect(x0, 14, x1 - x0, 3, '#17131c')
+    room.rect(x0, 14, x1 - x0, 1, '#211c28')
+    const jewels = ['#e8423a', '#f2c23a', '#4a8ae8', '#56c46a', '#f0f0f6', '#ff8a3a']
+    for (let x = x0 + 1; x < x1 - 1; x += 3) {
+      room.rect(x, 11, 2, 1, jewels[(x * 7) % 6]).rect(x, 12, 2, 1, jewels[(x * 5 + 2) % 6])
+      room.set(x, 13, '#3a3444')
+    }
+    for (let x = x0; x < x1; x += 8) room.rect(x, 10, 1, 7, '#1a1620')
+  }
+  consoleRun(0, 36)
+  consoleRun(73, GW)
+  // empty swivel chairs at the stations
+  const stChair = (x: number) => room.rect(x, 13, 4, 3, '#2a2430').rect(x, 13, 4, 1, '#4a4254').rect(x + 1, 16, 2, 1, '#221d28')
+  ;[5, 13, 29, 78, 86].forEach(stChair)
+  // upper deck carpet, the red rail, the step down into the well
+  room.rect(0, 17, 37, 1, '#4a1c26').rect(72, 17, 18, 1, '#4a1c26')
+  const rail = (x0: number, x1: number) => {
+    room.rect(x0, 18, x1 - x0, 1, '#ec6a58').rect(x0, 19, x1 - x0, 1, '#c22a2c').rect(x0, 20, x1 - x0, 1, '#7a1a1e')
+    for (let x = x0 + 2; x < x1; x += 7) room.rect(x, 21, 1, 2, '#9a2226')
+  }
+  room.rect(0, 21, 37, 2, '#2a2532').rect(72, 21, 18, 2, '#2a2532')
+  room.rect(0, 22, 37, 1, '#4a4458').rect(72, 22, 18, 1, '#4a4458')
+  rail(0, 35)
+  rail(74, GW)
+  // rounded rail ends
+  room.set(35, 19, '#c22a2c').set(35, 20, '#7a1a1e').rect(35, 21, 1, 2, '#9a2226')
+  room.set(73, 19, '#c22a2c').set(73, 20, '#7a1a1e').rect(73, 21, 1, 2, '#9a2226')
+  // the forward bulkhead and the viewscreen
+  room.rect(37, 2, 35, 21, '#2c2836')
+  room.rect(36, 1, 37, 1, '#4c465a').rect(36, 1, 1, 17, '#4c465a').rect(72, 1, 1, 17, '#3a3446')
+  room.rect(37, 2, 35, 15, '#0d0b12')
+  room.rect(VX, VY, VW, VH, '#06050e')
+  room.rect(37, 17, 35, 1, '#5a546c')
+  room.rect(38, 19, 33, 1, '#24202c').rect(40, 20, 3, 1, '#e8423a').rect(66, 20, 3, 1, '#4a8ae8')
+  // the well floor, with faint rings around the captain's chair
+  room.rect(0, 23, GW, 25, '#201b28')
+  room.rect(0, 23, GW, 1, '#16121c')
+  s += `<g mask="url(#rlFade)">${room.svg()}<g clip-path="url(#rlFloor)" fill="none" stroke="#29232f" stroke-width="${Q}">${[9, 18, 27].map(r => `<ellipse cx="${56 * Q}" cy="${22 * Q}" rx="${r * 2.6 * Q}" ry="${r * Q}"/>`).join('')}</g>`
+
+  // ---- the viewscreen: stars drifting slowly past a planet ----
+  let scr = ''
+  const tile = new Pix()
+  for (let i = 0; i < 24; i++) {
+    const x = Math.floor(rnd() * VW)
+    const y = VY + Math.floor(rnd() * VH)
+    const b = rnd()
+    tile.set(VX + x, y, b < 0.3 ? '#f2f4ff' : b < 0.6 ? '#9a9ac8' : '#5a5a86')
+  }
+  const tsvg = tile.svg()
+  scr += `<g>${tsvg}<g transform="translate(${VW * Q} 0)">${tsvg}</g><animateTransform attributeName="transform" type="translate" values="0 0;${-VW * Q} 0" dur="${T}s" repeatCount="indefinite"/></g>`
+  // a blue-green world low in the corner, lit from the upper left
+  const pl = new Pix()
+  const PCX = 61, PCY = 9, PR = 5
+  for (let y = VY; y < VY + VH; y++) {
+    for (let x = PCX - PR - 1; x <= PCX + PR + 1; x++) {
+      const dx = x - PCX
+      const dy = y - PCY
+      const d = Math.hypot(dx, dy)
+      if (d > PR + 0.4) continue
+      const lit = (-dx * 0.6 - dy * 0.8) / PR // toward the light
+      let c = lit > 0.55 ? '#7ad6d8' : lit > 0.2 ? '#3a9aa8' : lit > -0.2 ? '#22707e' : lit > -0.5 ? '#174a5a' : '#0e2a38'
+      // cloud bands and a continent
+      const band = Math.sin(dy * 2.1 + dx * 0.5)
+      if (band > 0.82 && lit > -0.3) c = lit > 0.3 ? '#e2f6f4' : '#9ac8cc'
+      if (Math.hypot(dx + 1, dy - 1.5) < 1.6 && lit > -0.1) c = lit > 0.35 ? '#8ac46a' : '#4a8a4a'
+      if (d > PR - 0.7 && lit > 0.1) c = '#b8f2f4'
+      pl.set(x, y, c)
+    }
+  }
+  scr += pl.svg()
+  s += `<g clip-path="url(#rlScr)">${scr}</g>`
+  s += new Pix().rect(VX, VY, VW, 1, '#ffffff').svg().replace('<rect', '<rect opacity="0.07"')
+
+  // ---- slow readouts on two of the monitors ----
+  // a scan line crossing the blue screen, a blip walking round the green one
+  s += `<rect x="${18 * Q}" y="${4 * Q}" width="${Q}" height="${4 * Q}" fill="#bcd4ff" opacity="0.7"><animateTransform attributeName="transform" type="translate" calcMode="discrete" values="0 0;${Q} 0;${2 * Q} 0;${3 * Q} 0;${4 * Q} 0;${5 * Q} 0;0 0" dur="${+(T / 6).toFixed(5)}s" repeatCount="indefinite"/></rect>`
+  s += `<rect x="${75 * Q}" y="${4 * Q}" width="${Q}" height="${Q}" fill="#c8ffd8"><animateTransform attributeName="transform" type="translate" calcMode="discrete" values="0 0;${2 * Q} 0;${4 * Q} ${Q};${5 * Q} ${3 * Q};${3 * Q} ${3 * Q};${Q} ${2 * Q};0 0" dur="${+(T / 5).toFixed(5)}s" begin="-0.4s" repeatCount="indefinite"/></rect>`
+  s += `<rect x="${2 * Q}" y="${7 * Q}" width="${6 * Q}" height="${Q}" fill="#2a3a5a"/><rect x="${2 * Q}" y="${7 * Q}" width="${Q}" height="${Q}" fill="#ff8a6a"><animateTransform attributeName="transform" type="translate" calcMode="discrete" values="0 0;${Q} 0;${2 * Q} 0;${3 * Q} 0;${4 * Q} 0;${5 * Q} 0;0 0" dur="${+(T / 4).toFixed(5)}s" begin="-0.3s" repeatCount="indefinite"/></rect>`
+
+  // ---- the console lights: little 1 px lamps blinking slowly, never in step ----
+  const lampSets: [number, number, string][][] = [[], [], [], [], [], [], [], []]
+  let li = 0
+  for (const [x0, x1] of [[0, 36], [73, GW], [38, 71]] as [number, number][]) {
+    for (let x = x0 + 2; x < x1 - 1; x += 3) {
+      const y = x0 === 38 ? 18 : 15 + (x % 2)
+      if (x0 === 38 && (x < 44 || x > 64)) continue
+      if (x0 === 38 && x % 2) continue
+      lampSets[li % 8].push([x, y, ['#ff5a4a', '#ffd04a', '#6aa8ff', '#6ae08a', '#ffffff', '#ff9a4a'][(li * 5) % 6]])
+      li++
+    }
+  }
+  const lampN = [7, 9, 6, 11, 8, 10, 12, 6]
+  lampSets.forEach((set, i) => {
+    const p = new Pix()
+    set.forEach(([x, y, c]) => p.set(x, y, c))
+    s += rlBlink(p.svg(), lampN[i], [0.15, 0.7, 0.3, 0.85, 0.2, 0.62, 0.38, 0.8][i])
+  })
+  s += `</g>`
+
+  // the science station's hooded scanner: a soft blue glow, breathing slowly
+  s += `<ellipse cx="${84.5 * Q}" cy="${12 * Q}" rx="9" ry="5" fill="url(#rlSci)"><animate attributeName="opacity" values="0.7;1;0.7" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" dur="${+(T / 3).toFixed(5)}s" repeatCount="indefinite"/></ellipse>`
+  s += new Pix().rect(83, 11, 3, 1, '#2a2632').rect(83, 12, 3, 1, '#8ab8ff').set(84, 12, '#d8e8ff').svg()
+  // the screen's cool light on the well floor
+  s += `<ellipse cx="${54 * Q}" cy="${24 * Q}" rx="70" ry="22" fill="url(#rlScreenGlow)"/>`
+
+  // ---- the helm and navigation console, the astrogator between ----
+  const helm = new Pix()
+  helm.rect(54, 19, 3, 3, '#3c3648').set(54, 19, '#5a546c').rect(55, 20, 1, 2, '#f0a848').set(55, 20, '#ffd890')
+  helm.rect(44, 22, 23, 1, '#6e6884').rect(43, 23, 25, 2, '#2a2632').rect(43, 25, 25, 1, '#4a4458').rect(44, 26, 23, 3, '#141118')
+  for (let x = 45; x < 66; x += 2) helm.set(x, 23, ['#e8423a', '#f2c23a', '#4a8ae8', '#56c46a', '#f0f0f6'][(x * 3) % 5])
+  for (let x = 46; x < 66; x += 4) helm.rect(x, 24, 2, 1, x % 8 ? '#ff8a3a' : '#7ab0ff')
+  helm.rect(54, 23, 3, 2, '#3c3648').set(55, 24, '#ffb860')
+  // two empty helm seats
+  for (const cx of [47, 60]) {
+    helm.rect(cx, 26, 5, 3, '#2c2632').rect(cx, 26, 5, 1, '#4c4458').rect(cx + 2, 29, 1, 2, '#3a3444').rect(cx, 31, 5, 1, '#2a2532')
+  }
+  s += helm.svg()
+
+  // ---- the captain's chair, seen from behind ----
+  const ch = new Pix()
+  const CX = 75
+  s += `<ellipse cx="${(CX + 0.5) * Q}" cy="${41.5 * Q}" rx="18" ry="3" fill="#0e0b14" opacity="0.6"/>`
+  ch.rect(CX - 6, 40, 13, 1, '#4a4458').rect(CX - 7, 41, 15, 1, '#2e2a38').rect(CX - 5, 39, 11, 1, '#6a6478')
+  ch.rect(CX - 2, 34, 5, 5, '#4a4458').rect(CX - 2, 34, 1, 5, '#6a6478').rect(CX + 2, 34, 1, 5, '#2e2a38')
+  ch.rect(CX - 6, 32, 13, 2, '#1c1822').rect(CX - 6, 32, 13, 1, '#3a3442')
+  // the back: rounded, padded, catching the screen light along its top
+  ch.rect(CX - 4, 24, 9, 1, '#3e3848').rect(CX - 5, 25, 11, 7, '#17131d')
+  ch.set(CX - 5, 25, '#2a2532').set(CX + 5, 25, '#2a2532')
+  ch.rect(CX - 5, 26, 1, 6, '#2e2836').rect(CX - 3, 25, 7, 1, '#2a2532')
+  ch.rect(CX - 1, 26, 1, 6, '#0f0c14').rect(CX + 2, 26, 1, 6, '#0f0c14')
+  // the arms, with their little control panels
+  ch.rect(CX - 8, 30, 4, 2, '#2a2532').rect(CX - 8, 30, 4, 1, '#4a4458').rect(CX + 5, 30, 4, 2, '#2a2532').rect(CX + 5, 30, 4, 1, '#4a4458')
+  ch.set(CX - 8, 31, '#e8423a').set(CX - 6, 31, '#f2c23a').set(CX + 6, 31, '#4a8ae8').set(CX + 8, 31, '#56c46a')
+  s += ch.svg()
+  s += rlBlink(new Pix().set(CX - 7, 31, '#ffffff').svg(), 7, 0.3) + rlBlink(new Pix().set(CX + 7, 31, '#ffd04a').svg(), 9, 0.65)
+
+  // keep the title corner quiet
+  s += `<rect x="0" y="${39 * Q}" width="${38 * Q}" height="${9 * Q}" fill="url(#rlShadeG)"/>`
+
+  // ================= Scotty =================
+  const k = RL_SC
+  const X = RL_X0
+  const Y = RL_Y
+
+  // ---- his timeline ----
+  const walks: [number, number, number][] = [[3.4, 5.8, 0.6], [13.7, 16.2, 0.625]]
+  const walk = rlTrack([[0, 0, 0], [3.4, 0, 0], [5.8, RL_WALK, 0], [13.7, RL_WALK, 0], [16.2, 0, 0]])
+  const nod = rlTrack([[0, 0, 0], [11.1, 0, 0], [11.5, 0, 1], [11.9, 0, 1], [12.3, 0, 0]])
+  type RlGaze = 'ur' | 'ul' | 'l' | 'r' | 'shut' | 'soft'
+  const gaze: [number, number, RlGaze][] = [
+    [0, 2.8, 'ur'], [2.8, 3.6, 'ul'], [3.6, 4.4, 'l'], [4.4, 6.35, 'r'], [6.35, 8.3, 'shut'], [8.3, 9.0, 'r'],
+    [9.0, 10.7, 'ur'], [10.7, 12.6, 'soft'], [12.6, 13.6, 'ur'], [13.6, 14.6, 'l'], [14.6, 15.4, 'ul'], [15.4, T, 'ur'],
+  ]
+  const blinks: [number, number][] = [[1.7, 1.85], [5.0, 5.15], [9.6, 9.75], [16.5, 16.65]]
+  const halfLid: [number, number][] = [[6.2, 6.35], [8.3, 8.45]]
+
+  // ---- the floor: shadow and legs (two pairs, stepping in turn) ----
+  let floor = `<ellipse cx="${(X + 9) * Q}" cy="${42 * Q}" rx="20" ry="2" fill="#0e0b14" opacity="0.6"/>`
+  for (const [pair, phase] of [[[1, 11], 0], [[5, 15], 0.5]] as [number[], number][]) {
+    const lp = new Pix()
+    for (const lx of pair) lp.rect(X + lx, Y + 10, 2, 4, k.black).set(X + lx + 1, Y + 10, k.blackL).set(X + lx, Y + 13, '#0c0a10')
+    floor += `<g>${lp.svg()}${rlBob(walks, 0.75, phase)}</g>`
+  }
+
+  // ---- the body: Clawd in the old red tunic, black collar, gold delta ----
+  const body = new Pix()
+  for (let j = 0; j < 10; j++) {
+    const inset = j === 0 || j === 9 ? 1 : 0
+    const c = j === 0 ? k.light : j < 6 ? k.skin : j < 9 ? k.red : k.black
+    body.rect(X + inset, Y + j, 18 - 2 * inset, 1, c)
+  }
+  body.rect(X, Y + 1, 1, 5, k.shade).rect(X + 17, Y + 1, 1, 5, k.rim)
+  body.rect(X, Y + 6, 1, 3, k.redDark).rect(X + 17, Y + 6, 1, 2, k.redLight)
+  body.rect(X, Y + 6, 18, 1, k.black).set(X + 17, Y + 6, k.blackL).set(X + 16, Y + 6, k.blackL)
+  body.rect(X + 1, Y + 8, 16, 1, '#ae2a26')
+  body.set(X + 13, Y + 7, k.goldL).rect(X + 12, Y + 8, 2, 1, k.gold)
+  body.rect(X + 1, Y + 9, 16, 1, k.black).set(X + 16, Y + 9, k.blackL)
+  // grey hair, a little tousled, parted on the far side
+  body.rows(
+    [
+      '...dhLhhdhhLhhhd..',
+      '.dhhLhhhdhhhLhhhL.',
+      'dhd............dhL',
+      'dh..............hL',
+      'd................h',
+    ],
+    X, Y - 1, { d: k.hairD, h: k.hair, L: k.hairL },
+  )
+  let sc = body.svg()
+  // left claw resting at his side
+  sc += new Pix().rect(X - 3, Y + 4, 3, 2, k.skin).set(X - 3, Y + 4, k.light).rect(X - 3, Y + 6, 3, 1, k.shade).svg()
+
+  // ---- the right claw and the glass of green Aldebaran whiskey ----
+  // a drawing for every place the glass passes through (glass top-left, relative to the body)
+  const armR = (dx: number, dy: number) => {
+    const p = new Pix()
+    const gx = X + dx
+    const gy = Y + dy
+    const line = rlLine(X + 18, Y + 4, gx + 1, gy + 5)
+    line.forEach(([lx, ly]) => p.rect(lx, ly + 1, 2, 2, k.shade))
+    line.forEach(([lx, ly]) => p.rect(lx, ly, 2, 2, k.skin))
+    p.rect(X + 18, Y + 4, 2, 2, k.skin).set(X + 18, Y + 4, k.light)
+    // the claw cupping the glass
+    p.rect(gx - 1, gy + 2, 1, 3, k.skin).rect(gx + 3, gy + 2, 1, 3, k.skin).rect(gx - 1, gy + 4, 5, 1, k.skin)
+    p.set(gx - 1, gy + 2, k.light).set(gx + 3, gy + 2, k.light).rect(gx, gy + 5, 3, 1, k.shade)
+    // the tumbler
+    p.rows(['rLr', 'wgg', 'ggd', 'sss'], gx, gy, RL_GLASS)
+    return p.svg()
+  }
+  const REST: [number, number] = [20, 3]
+  const DRINK: [number, number][] = [REST, [20, 2], [19, 1], [19, 0], [18, -1]]
+  const TOAST: [number, number][] = [REST]
+  // a plain raised claw (armUpHD proportions): glass held just above his head
+  for (let i = 1; i <= 7; i++) {
+    const f = i / 7
+    TOAST.push([Math.round(20 - f + 1.5 * Math.sin(Math.PI * f)), Math.round(3 - 11 * f)])
+  }
+  const draws = new Map<string, [number, number][]>()
+  const busy: [number, number][] = []
+  const add = (pos: [number, number], w: [number, number]) => {
+    const key = pos.join(',')
+    if (!draws.has(key)) draws.set(key, [])
+    draws.get(key)!.push(w)
+  }
+  // up through the in-betweens, hold, and back down the same way
+  const move = (path: [number, number][], a: number, steps: number[], b: number) => {
+    let t = a
+    for (let i = 1; i < path.length - 1; i++) add(path[i], [t, (t += steps[i - 1])])
+    add(path[path.length - 1], [t, b])
+    let u = b
+    for (let i = path.length - 2; i >= 1; i--) add(path[i], [u, (u += steps[i - 1])])
+    busy.push([a, u])
+  }
+  move(DRINK, 5.95, [0.13, 0.11, 0.13], 8.15)
+  move(TOAST, 9.6, [0.15, 0.12, 0.1, 0.1, 0.12, 0.15], 12.6)
+  sc += shown(armR(...REST), complement(merge(busy), T), T)
+  for (const [key, w] of draws) {
+    const [dx, dy] = key.split(',').map(Number)
+    sc += shown(armR(dx, dy), w, T)
+  }
+
+  // ---- eyes ----
+  const eyeAt: Record<RlGaze, [number[], number, number]> = {
+    ur: [[7, 13], 1, 3], ul: [[4, 10], 1, 3], l: [[4, 10], 2, 3], r: [[6, 12], 2, 3], shut: [[6, 12], 3, 1], soft: [[7, 13], 2, 2],
+  }
+  const open = complement(merge(blinks), T)
+  for (const g of ['ur', 'ul', 'l', 'r', 'shut', 'soft'] as RlGaze[]) {
+    const w = merge(gaze.filter(z => z[2] === g).map(z => [z[0], z[1]] as [number, number]))
+    const [xs, ey, eh] = eyeAt[g]
+    const e = new Pix()
+    xs.forEach(ex => e.rect(X + ex, Y + ey, 2, eh, EYE_HD))
+    if (g === 'shut') xs.forEach(ex => e.set(X + ex - 1, Y + 2, EYE_HD)) // a contented squint
+    if (g === 'soft') xs.forEach(ex => e.rect(X + ex, Y + 1, 2, 1, k.shade)) // heavy lids
+    if (g === 'ur' || g === 'ul') xs.forEach(ex => e.set(X + ex + (g === 'ur' ? 1 : 0), Y + 1, '#3a2a4a'))
+    let vis = rlInter(w, open)
+    if (g === 'r') vis = rlInter(vis, complement(merge(halfLid), T))
+    sc += shown(e.svg(), vis, T)
+    const bw = rlInter(w, merge(blinks))
+    if (bw.length) {
+      const b = new Pix()
+      xs.forEach(ex => b.rect(X + ex, Y + 3, 2, 1, EYE_HD))
+      sc += shown(b.svg(), bw, T)
+    }
+  }
+  // half-closed on the way into and out of the sip
+  const hl = new Pix()
+  ;[6, 12].forEach(ex => hl.rect(X + ex, Y + 3, 2, 2, EYE_HD))
+  sc += shown(hl.svg(), halfLid, T)
+  // a glint of a tear while he toasts the old ship
+  const tear = new Pix().set(X + 15, Y + 4, '#dff0ff')
+  sc += `<g opacity="0">${tear.svg()}<animate attributeName="opacity" values="0;0;0.9;0.9;0;0" keyTimes="${rlKt([0, 10.9, 11.4, 12.2, 12.7, T])}" dur="${T}s" repeatCount="indefinite"/></g>`
+
+  // the raised glass catches the screen light: one soft glint at the top of the toast
+  {
+    const [tx, ty] = TOAST[TOAST.length - 1]
+    const gl = new Pix().set(X + tx + 2, Y + ty - 1, '#f4fff8').set(X + tx + 1, Y + ty - 1, '#bfeccc').set(X + tx + 3, Y + ty - 1, '#bfeccc').set(X + tx + 2, Y + ty - 2, '#bfeccc')
+    sc += `<g opacity="0">${gl.svg()}<animate attributeName="opacity" values="0;0;0.85;0.85;0;0" keyTimes="${rlKt([0, 10.5, 11.0, 11.8, 12.4, T])}" dur="${T}s" repeatCount="indefinite"/></g>`
+  }
+  // warm light catching him from the screen side
+  const crab = `<g>${floor}<g><g>${sc}${rlBob(walks, 0.5, 0.25)}</g>${nod}</g>${walk}</g>`
+  s += crab
+  s += `<ellipse cx="${60 * Q}" cy="${32 * Q}" rx="60" ry="16" fill="url(#rlWarm)"/>`
+  return s
+}
+
+// ---------- Data and Spot: "Ode to Spot" ----------
+// Data's quarters on the Enterprise-D, evening light. Data (Clawd) stands reading his
+// "Ode to Spot" from a PADD, a speech bubble filling with verse. Spot, his orange tabby,
+// sleeps on her cushion right beside him with her back to him.
+// One 17.17 s story, played once (authored seconds; the band plays it 10/17.17 as fast):
+//  0.0 - 2.9  calm: Data reads, Spot asleep on her cushion, the first verse appears
+//  2.9 - 6.2  Spot wakes, looks up, gets up and has a long, blissful stretch
+//  6.2 - 9.1  she strolls off to her bowl of Feline Supplement 74 while Data, undeterred,
+//             raises a claw for the big second verse
+//  9.1 - 11.7 she eats, tail swaying; Data reads on
+// 11.7 - 17.17 she turns, strolls back, circles once on the cushion and curls up again
+//             beside him; the verse ends and the bubble goes: the opening shot
+
+const DS_T = SCENE_SECONDS
+const DS_EASE = '0.4 0 0.2 1'
+const dsKt = (ts: number[]) => ts.map(t => +(t / DS_T).toFixed(5)).join(';')
+
+// eased translate on the story timeline: [t, x, y] in art px, held flat between keys
+function dsTrack(pts: [number, number, number][], spline = DS_EASE) {
+  const list = [...pts]
+  if (list[0][0] > 0) list.unshift([0, list[0][1], list[0][2]])
+  const last = list[list.length - 1]
+  if (last[0] < DS_T) list.push([DS_T, last[1], last[2]])
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${DS_T}s" repeatCount="indefinite" values="${list.map(p => `${+(p[1] * Q).toFixed(2)} ${+(p[2] * Q).toFixed(2)}`).join(';')}" keyTimes="${dsKt(list.map(p => p[0]))}" keySplines="${list.slice(1).map(() => spline).join(';')}"/>`
+}
+
+// smooth opacity on the story timeline: [t, value]
+function dsFade(pts: [number, number][]) {
+  const list = [...pts]
+  if (list[0][0] > 0) list.unshift([0, list[0][1]])
+  if (list[list.length - 1][0] < DS_T) list.push([DS_T, list[list.length - 1][1]])
+  return `<animate attributeName="opacity" dur="${DS_T}s" repeatCount="indefinite" values="${list.map(p => p[1]).join(';')}" keyTimes="${dsKt(list.map(p => p[0]))}"/>`
+}
+
+function dsInter(a: [number, number][], b: [number, number][]) {
+  const out: [number, number][] = []
+  for (const [a0, a1] of a) for (const [b0, b1] of b) {
+    const lo = Math.max(a0, b0)
+    const hi = Math.min(a1, b1)
+    if (hi > lo) out.push([lo, hi])
+  }
+  return out
+}
+
+// ---------- Spot ----------
+const DS_CAT: Record<string, string> = {
+  o: '#e0873a', // orange
+  l: '#f6ae5e', // light top
+  d: '#a4501c', // tabby stripe
+  s: '#bd6a2c', // underside shade
+  w: '#f6dcae', // cream muzzle / chest
+  i: '#e8968a', // inner ear
+  n: '#e8848a', // nose
+  e: '#cfe25a', // eye
+  c: '#5e2c12', // closed eye
+  f: '#9a4818', // far legs
+  p: '#f2cc96', // paws
+}
+const DS_CAT_LINE = '#36190c'
+
+type DsFace = 'side' | '3q' | 'front'
+type DsCat = {
+  len: number // body length in art px
+  fl: number // front leg height
+  rl: number // rear leg height
+  hx: number
+  hy: number
+  face: DsFace
+  dir: 1 | -1
+  eyes: 'o' | 'c'
+  tail: number[][]
+  tailFront: boolean
+  paws: number // front paws stretched forward along the ground
+  walk: number // walk-cycle frame, -1 standing still
+}
+
+// heads facing right; '.' empty
+const DS_HEAD: Record<DsFace, string[]> = {
+  side: [
+    '.o..o..',
+    '.oi.oi.',
+    'llldll.',
+    'odooeo.',
+    'ooooooon',
+    '.swwww.',
+  ],
+  '3q': [
+    '.o...o.',
+    '.oi.oi.',
+    'lldllll',
+    'oeoodeo',
+    'oooonoo',
+    '.wwwww.',
+  ],
+  front: [
+    'o.....o',
+    'oi...io',
+    'llldlll',
+    'oeodoeo',
+    'ooonooo',
+    '.wwwww.',
+  ],
+}
+
+// tails: 8 points relative to the rear top corner of the body (x back is negative)
+const DS_TAIL_WRAP = [[0, 2], [-1, 3], [-1, 4], [0, 5], [2, 5], [4, 5], [6, 5], [7, 4]]
+const DS_TAIL_RELAX = [[0, 1], [-1, 1], [-2, 1], [-3, 0], [-4, -1], [-4, -2], [-4, -3], [-3, -4]]
+const DS_TAIL_SWAY = [[0, 1], [-1, 1], [-2, 0], [-2, -1], [-3, -2], [-3, -3], [-2, -4], [-1, -4]]
+const DS_TAIL_UP = [[0, 1], [-1, 0], [-2, -1], [-2, -2], [-2, -3], [-2, -4], [-1, -5], [0, -5]]
+const DS_TAIL_STRETCH = [[0, 1], [-1, 0], [-1, -1], [-1, -2], [0, -3], [0, -4], [1, -5], [2, -5]]
+
+const DS_WALK = [
+  [1, -1, -1, 1],
+  [0, 0, 0, 0],
+  [-1, 1, 1, -1],
+  [0, 0, 0, 0],
+]
+
+function dsLine(put: (x: number, y: number, i: number) => void, x0: number, y0: number, x1: number, y1: number, i: number) {
+  const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1)
+  for (let k = 0; k <= n; k++) put(Math.round(x0 + ((x1 - x0) * k) / n), Math.round(y0 + ((y1 - y0) * k) / n), i)
+}
+
+// draw Spot (local: x around 0, ground row y = 0, facing right), outline it, place it
+function dsCatSvg(P: DsCat, ox: number, oy: number) {
+  const m = new Map<string, string>()
+  const put = (x: number, y: number, c: string) => m.set(x + ',' + y, c)
+  const L = Math.max(5, Math.round(P.len))
+  const xr = -Math.floor(L / 2)
+  const xf = xr + L - 1
+  const legAt = (x: number) => Math.round(P.rl + (P.fl - P.rl) * ((x - xr) / (L - 1)))
+  const topAt = (x: number) => -legAt(x) - 4
+  // far legs
+  const off = P.walk >= 0 ? DS_WALK[P.walk] : [0, 0, 0, 0]
+  const leg = (x: number, o: number, near: boolean) => {
+    const h = legAt(x)
+    for (let i = 0; i < h; i++) {
+      const xx = x + Math.round((o * (i + 1)) / h)
+      put(xx, -h + 1 + i, near ? (i === h - 1 ? DS_CAT.p : i === 0 ? DS_CAT.o : DS_CAT.o) : DS_CAT.f)
+    }
+  }
+  if (P.paws < 0.5) leg(xf - 3, off[1], false)
+  leg(xr + 1, off[3], false)
+  // tail behind the body
+  const tx = xr
+  const ty = topAt(xr)
+  const tail = (front: boolean) => {
+    if (P.tailFront !== front) return
+    const pts = P.tail.map(([x, y]) => [Math.round(x), Math.round(y)])
+    let k = 0
+    for (let i = 1; i < pts.length; i++) {
+      dsLine((x, y) => {
+        k++
+        const tip = i === pts.length - 1
+        put(tx + x, ty + y, tip ? DS_CAT.d : k % 3 === 0 ? DS_CAT.d : DS_CAT.o)
+      }, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1], i)
+    }
+  }
+  tail(false)
+  // body
+  const stripes = L >= 10 ? [2, 5, 8] : L >= 7 ? [2, 5] : [2]
+  for (let x = xr; x <= xf; x++) {
+    const top = topAt(x)
+    const end = x === xr || x === xf
+    for (let r = end ? 1 : 0; r <= (end ? 3 : 4); r++) {
+      let c = r === 0 ? DS_CAT.l : r === 4 ? DS_CAT.s : DS_CAT.o
+      if (stripes.includes(x - xr) && r <= 2) c = DS_CAT.d
+      if (x >= xf - 2 && r >= 2) c = DS_CAT.w
+      if (x <= xr + 2 && r === 3) c = DS_CAT.s
+      put(x, top + r, c)
+    }
+  }
+  // near legs
+  if (P.paws < 0.5) leg(xf - 2, off[0], true)
+  leg(xr + 2, off[2], true)
+  // stretched-out forepaws, or tucked paws when lying down
+  if (P.paws >= 0.5) {
+    const n = Math.round(P.paws)
+    for (let x = xf - 2; x <= xf + n; x++) put(x, 0, x >= xf + n - 1 ? DS_CAT.p : DS_CAT.o)
+    for (let x = xf - 1; x < xf + n - 1; x++) put(x, -1, DS_CAT.f)
+  } else if (P.fl < 0.5) {
+    put(xf + 1, 0, DS_CAT.p)
+    put(xf + 2, 0, DS_CAT.p)
+  }
+  tail(true)
+  // head
+  const rows = DS_HEAD[P.face].map(r => (P.eyes === 'c' ? r.replace(/e/g, 'c') : r))
+  const hx0 = P.face === 'front' ? Math.round((xr + xf) / 2) - 3 + Math.round(P.hx) : P.face === '3q' ? xf - 4 + Math.round(P.hx) : xf - 3 + Math.round(P.hx)
+  const hy0 = topAt(xf) - 3 + Math.round(P.hy)
+  rows.forEach((row, j) => {
+    for (let i = 0; i < row.length; i++) if (DS_CAT[row[i]]) put(hx0 + i, hy0 + j, DS_CAT[row[i]])
+  })
+  // outline around the whole cat
+  const out = new Map<string, string>()
+  for (const k of m.keys()) {
+    const [x, y] = k.split(',').map(Number)
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const kk = x + dx + ',' + (y + dy)
+      if (!m.has(kk) && y + dy <= 0) out.set(kk, DS_CAT_LINE)
+    }
+  }
+  for (const [k, c] of m) out.set(k, c)
+  return dsPaths(out, ox, oy, P.dir)
+}
+
+// compact sprite: one stroked path per colour, one horizontal run per segment (art px)
+function dsPaths(m: Map<string, string>, ox: number, oy: number, dir: number) {
+  const rows = new Map<number, Map<number, string>>()
+  for (const [k, c] of m) {
+    const [x, y] = k.split(',').map(Number)
+    const X = ox + dir * x
+    const Y = oy + y
+    if (!rows.has(Y)) rows.set(Y, new Map())
+    rows.get(Y)!.set(X, c)
+  }
+  const byC = new Map<string, string>()
+  for (const [y, row] of rows) {
+    const xs = [...row.keys()].sort((a, b) => a - b)
+    let i = 0
+    while (i < xs.length) {
+      const c = row.get(xs[i])!
+      let j = i
+      while (j + 1 < xs.length && xs[j + 1] === xs[j] + 1 && row.get(xs[j + 1]) === c) j++
+      byC.set(c, (byC.get(c) || '') + `M${xs[i]} ${y}.5h${xs[j] - xs[i] + 1}`)
+      i = j + 1
+    }
+  }
+  let s = ''
+  for (const [c, d] of byC) s += `<path stroke="${c}" d="${d}"/>`
+  return `<g transform="scale(${Q})" fill="none">${s}</g>`
+}
+
+// a pixel layer like Pix, written as compact stroked paths
+class DsPix {
+  m = new Map<string, string>()
+  set(x: number, y: number, c: string) {
+    this.m.set(x + ',' + y, c)
+    return this
+  }
+  rect(x: number, y: number, w: number, h: number, c: string) {
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.set(x + i, y + j, c)
+    return this
+  }
+  svg() {
+    return dsPaths(this.m, 0, 0, 1)
+  }
+}
+
+function dsLerp(A: DsCat, B: DsCat, f: number): DsCat {
+  const n = (a: number, b: number) => a + (b - a) * f
+  const h = f < 0.5
+  return {
+    len: n(A.len, B.len),
+    fl: n(A.fl, B.fl),
+    rl: n(A.rl, B.rl),
+    hx: n(A.hx, B.hx),
+    hy: n(A.hy, B.hy),
+    paws: n(A.paws, B.paws),
+    face: h ? A.face : B.face,
+    dir: h ? A.dir : B.dir,
+    eyes: h ? A.eyes : B.eyes,
+    tailFront: h ? A.tailFront : B.tailFront,
+    tail: A.tail.map((p, i) => [n(p[0], B.tail[i][0]), n(p[1], B.tail[i][1])]),
+    walk: -1,
+  }
+}
+
+// ---------- Data ----------
+const DS_DATA: CrabHD = {
+  skin: '#e9dfbf',
+  light: '#f7f0d8',
+  shade: '#bfb38c',
+  upper: '#1c1424',
+  lower: '#c99a22',
+  lowerShade: '#9a7414',
+  legs: '#1c1424',
+  rim: '#ffe6b0',
+}
+type DsGaze = 'ur' | 'dr' | 'ul' | 'c'
+
+function dataAndSpot() {
+  const T = DS_T
+  const W = GW * Q
+  const H = GH * Q
+  let seed = 74
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
+  const per = (n: number) => +(T / n).toFixed(5)
+
+  let s = `<defs>
+    <linearGradient id="dsFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="dsFade"><rect width="${W}" height="${H}" fill="url(#dsFadeG)"/></mask>
+    <radialGradient id="dsLamp"><stop offset="0" stop-color="#ffc47a" stop-opacity="0.26"/><stop offset="1" stop-color="#ffc47a" stop-opacity="0"/></radialGradient>
+    <radialGradient id="dsSconce"><stop offset="0" stop-color="#ffd890" stop-opacity="0.5"/><stop offset="1" stop-color="#ffd890" stop-opacity="0"/></radialGradient>
+    <radialGradient id="dsNeb"><stop offset="0" stop-color="#7a5ac8" stop-opacity="0.45"/><stop offset="1" stop-color="#7a5ac8" stop-opacity="0"/></radialGradient>
+    <radialGradient id="dsWin"><stop offset="0" stop-color="#8aa0e8" stop-opacity="0.14"/><stop offset="1" stop-color="#8aa0e8" stop-opacity="0"/></radialGradient>
+    <radialGradient id="dsCorner"><stop offset="0" stop-color="#140e1a" stop-opacity="0.55"/><stop offset="0.6" stop-color="#140e1a" stop-opacity="0.35"/><stop offset="1" stop-color="#140e1a" stop-opacity="0"/></radialGradient>
+  </defs>`
+
+  // ---------- the quarters ----------
+  let base = ''
+  const vr = (x: number, y: number, w: number, h: number, c: string) =>
+    (base += `<rect x="${x * Q}" y="${y * Q}" width="${w * Q}" height="${h * Q}" fill="${c}"/>`)
+  const room = new DsPix()
+  // ceiling with a warm cove light
+  vr(0, 0, GW, 2, '#1e1620')
+  vr(0, 2, GW, 1, '#6a4a3a')
+  // the wall: warm taupe with a darker lower band and a rail
+  vr(0, 3, GW, 22, '#3c2e38')
+  for (let r = 7; r < 25; r += 6) vr(0, r, GW, 1, '#402f3c')
+  vr(0, 25, GW, 1, '#6a5246')
+  vr(0, 26, GW, 6, '#30242e')
+  for (let c = 2; c < GW; c += 7) vr(c, 27, 1, 5, '#2a1f28')
+  // the long window onto space, slanted at the top left like the Enterprise's
+  const WX0 = 58
+  const WX1 = 88
+  const WY0 = 4
+  const WY1 = 20
+  vr(WX0 - 1, WY0 - 1, WX1 - WX0 + 3, WY1 - WY0 + 3, '#5c4a52')
+  vr(WX0 - 1, WY1 + 1, WX1 - WX0 + 3, 1, '#7a6266')
+  vr(WX0, WY0, WX1 - WX0 + 1, WY1 - WY0 + 1, '#080716')
+  for (let y = WY0; y <= WY1; y++) {
+    const cut = Math.max(0, 4 - (y - WY0))
+    for (let x = WX0; x < WX0 + cut; x++) room.set(x, y, '#5c4a52')
+  }
+  // mullions
+  for (const mx of [68, 78]) room.rect(mx, WY0, 1, WY1 - WY0 + 1, '#4a3a44')
+  // faint stars
+  for (let i = 0; i < 34; i++) {
+    const x = WX0 + 1 + Math.floor(rnd() * (WX1 - WX0))
+    const y = WY0 + Math.floor(rnd() * (WY1 - WY0 + 1))
+    if (x === 68 || x === 78 || x < WX0 + Math.max(0, 4 - (y - WY0))) continue
+    room.set(x, y, rnd() < 0.6 ? '#3a3a62' : '#6a6c9a')
+  }
+  // the sill
+  vr(WX0 - 2, WY1 + 2, WX1 - WX0 + 5, 1, '#8a6e62')
+  vr(WX0 - 2, WY1 + 3, WX1 - WX0 + 5, 1, '#4a3842')
+  // a wall sconce between the bubble and the window
+  room.rect(52, 7, 3, 1, '#c89a5a').rect(52, 8, 3, 3, '#ffe0a0').rect(53, 11, 1, 1, '#8a6a4a').set(52, 8, '#f2c070')
+  // a shelf on the far left (in the faded edge): books and Data's violin case
+  room.rect(3, 14, 15, 1, '#7a5a44').rect(3, 15, 15, 1, '#4a3430')
+  room.rect(4, 10, 1, 4, '#8a3a3a').rect(5, 11, 1, 3, '#3a5a7a').rect(6, 10, 1, 4, '#c08a4a').rect(7, 11, 1, 3, '#5a7a4a')
+  room.rect(10, 11, 7, 3, '#5a2e1e').rect(11, 11, 5, 1, '#7a4428').set(16, 12, '#3a1c12')
+  // the floor: warm dark carpet
+  vr(0, 32, GW, 16, '#2a2028')
+  vr(0, 32, GW, 1, '#1a1418')
+  for (let r = 35; r < 48; r += 3) vr(0, r, GW, 1, '#2e2330')
+  for (let i = 0; i < 20; i++) room.set(Math.floor(rnd() * GW), 33 + Math.floor(rnd() * 15), rnd() < 0.5 ? '#33283a' : '#221a20')
+  s += `<g mask="url(#dsFade)">${base}${room.svg()}`
+  // a soft nebula and a few slow twinkles in the window
+  s += `<ellipse cx="${82 * Q}" cy="${9 * Q}" rx="20" ry="11" fill="url(#dsNeb)"/>`
+  ;[[63, 9], [72, 6], [75, 15], [84, 13], [86, 6], [62, 17]].forEach(([x, y], i) => {
+    s += `<g>${new DsPix().set(x, y, '#eef0ff').svg()}<animate attributeName="opacity" values="0.3;0.9;0.3" dur="${per([5, 4, 3, 4, 5, 3][i])}s" begin="-${(i * 0.9).toFixed(1)}s" repeatCount="indefinite"/></g>`
+  })
+  s += `</g>`
+  s += `<ellipse cx="${73 * Q}" cy="${24 * Q}" rx="40" ry="22" fill="url(#dsWin)"/>`
+  s += `<ellipse cx="${53 * Q}" cy="${9 * Q}" rx="16" ry="14" fill="url(#dsSconce)"/>`
+  s += `<ellipse cx="${50 * Q}" cy="${32 * Q}" rx="80" ry="30" fill="url(#dsLamp)"/>`
+
+  // ---------- Spot's cushion and her bowl ----------
+  const cush = new DsPix()
+  cush.rect(51, 36, 17, 1, '#8a74a8').rect(50, 37, 19, 1, '#7a6498').rect(49, 38, 21, 3, '#5e4a80').rect(50, 41, 19, 1, '#3e3058')
+  cush.rect(49, 38, 21, 1, '#6c5690').set(49, 40, '#4a3a6a').set(69, 40, '#4a3a6a')
+  for (const tx of [53, 59, 65]) cush.set(tx, 39, '#4a3a6a')
+  s += `<ellipse cx="${59.5 * Q}" cy="${42 * Q}" rx="23" ry="2.5" fill="#0e0a12" opacity="0.6"/>`
+  s += cush.svg()
+  // the bowl, with a heap of Feline Supplement 74
+  const bowlBack = new DsPix().rect(78, 37, 7, 1, '#5a4a3a').rect(79, 36, 5, 1, '#b07a48').set(80, 35, '#c88a52').set(82, 35, '#9a6438')
+  const bowl = new DsPix()
+  bowl.rect(77, 38, 9, 1, '#d8dce8').rect(77, 39, 9, 1, '#9aa4c0').rect(78, 40, 7, 1, '#6a7494').set(77, 38, '#f0f2f8')
+  bowl.rect(80, 39, 3, 1, '#c84a3a')
+  s += `<ellipse cx="${81.5 * Q}" cy="${41 * Q}" rx="10" ry="1.5" fill="#0e0a12" opacity="0.6"/>`
+  s += bowlBack.svg()
+
+  // ---------- Spot's story ----------
+  const BX = 59
+  const BY = 38
+  const SLEEP: DsCat = { len: 12, fl: 0, rl: 0, hx: 0, hy: 2, face: 'side', dir: 1, eyes: 'c', tail: DS_TAIL_WRAP, tailFront: true, paws: 0, walk: -1 }
+  const LIE: DsCat = { ...SLEEP, hy: 0, eyes: 'o' }
+  const STAND: DsCat = { ...SLEEP, fl: 3, rl: 3, hy: 0, eyes: 'o', tail: DS_TAIL_RELAX, tailFront: false }
+  const STRETCH: DsCat = { ...STAND, fl: 0, rl: 4, hx: 2, hy: 3, paws: 3, eyes: 'c', tail: DS_TAIL_STRETCH }
+  const WALKR: DsCat = { ...STAND, tail: DS_TAIL_UP }
+  const EAT: DsCat = { ...STAND, hx: 1, hy: 4 }
+  const EAT2: DsCat = { ...EAT, tail: DS_TAIL_SWAY }
+  const Q3R: DsCat = { ...WALKR, len: 9, face: '3q' }
+  const FRONT: DsCat = { ...WALKR, len: 7, face: 'front' }
+  const Q3L: DsCat = { ...Q3R, dir: -1 }
+  const WALKL: DsCat = { ...WALKR, dir: -1 }
+  const LIE_R: DsCat = { ...LIE }
+  const seg: [number, number, DsCat][] = []
+  const hold = (a: number, b: number, P: DsCat) => seg.push([a, b, P])
+  const tr = (a: number, b: number, A: DsCat, B: DsCat, n = 3) => {
+    for (let i = 0; i < n; i++) seg.push([a + ((b - a) * i) / n, a + ((b - a) * (i + 1)) / n, dsLerp(A, B, (i + 1) / (n + 1))])
+  }
+  const seq = (a: number, b: number, list: DsCat[]) => list.forEach((P, i) => seg.push([a + ((b - a) * i) / list.length, a + ((b - a) * (i + 1)) / list.length, P]))
+  const walk = (a: number, b: number, P: DsCat) => {
+    const n = Math.round((b - a) / 0.18)
+    for (let i = 0; i < n; i++) seg.push([a + ((b - a) * i) / n, a + ((b - a) * (i + 1)) / n, { ...P, walk: i % 4 }])
+  }
+  hold(0, 2.9, SLEEP)
+  tr(2.9, 3.35, SLEEP, LIE) // head comes up, eyes open
+  hold(3.35, 3.7, LIE)
+  hold(3.7, 3.82, { ...LIE, eyes: 'c' }) // a slow blink at Data
+  hold(3.82, 4.0, LIE)
+  tr(4.0, 4.5, LIE, STAND) // gets up
+  tr(4.5, 4.95, STAND, STRETCH) // into the stretch
+  hold(4.95, 5.7, STRETCH)
+  tr(5.7, 6.2, STRETCH, WALKR) // out of it, tail up
+  walk(6.2, 9.08, WALKR) // off to the bowl
+  tr(9.08, 9.5, WALKR, EAT) // head down into the bowl
+  // eating, tail swaying slowly
+  {
+    const sway = [0, 1, 2, 3, 2, 1].map(k => dsLerp(EAT, EAT2, k / 3))
+    const step = (11.3 - 9.5) / 12
+    for (let i = 0; i < 12; i++) seg.push([9.5 + i * step, 9.5 + (i + 1) * step, sway[i % 6]])
+  }
+  tr(11.3, 11.7, EAT, WALKR) // head up
+  seq(11.7, 12.2, [Q3R, FRONT, Q3L]) // turns around
+  walk(12.2, 14.36, WALKL) // back to the cushion
+  seq(14.36, 14.9, [Q3L, FRONT, Q3R]) // circles once
+  tr(14.9, 15.4, WALKR, LIE_R) // lies down
+  hold(15.4, 15.75, LIE_R)
+  tr(15.75, 16.25, LIE_R, SLEEP) // head down, eyes shut
+  hold(16.25, T, SLEEP)
+  // one sprite per distinct drawing, shown in all its windows
+  const sprites = new Map<string, [number, number][]>()
+  for (const [a, b, P] of seg) {
+    const svg = dsCatSvg(P, BX, BY)
+    if (!sprites.has(svg)) sprites.set(svg, [])
+    sprites.get(svg)!.push([a, b])
+  }
+  let cat = ''
+  for (const [svg, w] of sprites) cat += shown(svg, w, T)
+  // across the floor, and down off / back up onto the cushion
+  const slide = dsTrack([[6.2, 0, 0], [9.08, 17, 0], [12.2, 17, 0], [14.36, 0, 0]], '0.3 0 0.7 1')
+  const step = dsTrack([[7.15, 0, 0], [7.6, 0, 2], [13.45, 0, 2], [13.9, 0, 0]])
+  s += `<g><g>${cat}${step}</g>${slide}</g>`
+  s += bowl.svg()
+
+  // ---------- Data ----------
+  const DX = 26
+  const DY = 26
+  const k = DS_DATA
+  s += `<ellipse cx="${(DX + 9) * Q}" cy="${40 * Q}" rx="20" ry="2" fill="#0e0a12" opacity="0.6"/>`
+  const d = new DsPix()
+  for (let j = 0; j < 10; j++) {
+    const inset = j === 0 || j === 9 ? 1 : 0
+    let c = j === 0 ? k.light : k.skin
+    if (j >= 6) c = j < 8 ? k.upper! : k.lower!
+    d.rect(DX + inset, DY + j, 18 - 2 * inset, 1, c)
+  }
+  d.rect(DX, DY + 1, 1, 5, k.shade).rect(DX + 17, DY + 1, 1, 5, k.rim).set(DX, DY + 8, k.lowerShade!)
+  for (const lx of [1, 5, 11, 15]) d.rect(DX + lx, DY + 10, 2, 4, k.legs).set(DX + lx + 1, DY + 10, '#2c2236')
+  // slicked-back dark hair with a widow's peak
+  d.rect(DX + 1, DY - 1, 16, 1, '#141018').rect(DX + 5, DY - 1, 6, 1, '#2e2a3a')
+  d.rect(DX, DY, 18, 1, '#141018').rect(DX + 3, DY, 4, 1, '#3a3448').rect(DX + 8, DY + 1, 2, 1, '#141018')
+  d.set(DX, DY + 1, '#141018').set(DX + 17, DY + 1, '#141018')
+  // combadge, two pips and a hollow one
+  d.rect(DX + 4, DY + 6, 2, 2, '#e8c547').set(DX + 4, DY + 6, '#fff3b0')
+  d.set(DX + 10, DY + 6, '#e8c547').set(DX + 12, DY + 6, '#e8c547').set(DX + 14, DY + 6, '#7a6a2a')
+  s += d.svg()
+
+  // right claw up, holding the PADD where he can read it
+  const padd = new DsPix()
+  padd.rect(DX + 18, DY + 4, 2, 2, k.skin).rect(DX + 18, DY + 6, 2, 1, k.shade)
+  padd.rect(DX + 19, DY + 2, 2, 2, k.skin).set(DX + 20, DY + 3, k.shade)
+  padd.rect(DX + 20, DY, 2, 2, k.skin).set(DX + 21, DY + 1, k.shade)
+  padd.rect(DX + 20, DY - 9, 6, 8, '#2a2632').rect(DX + 20, DY - 9, 6, 1, '#4a4656').rect(DX + 25, DY - 9, 1, 8, '#1a1820')
+  padd.rect(DX + 21, DY - 8, 4, 6, '#141220')
+  padd.rect(DX + 21, DY - 8, 2, 1, '#e8a04a').rect(DX + 23, DY - 8, 2, 1, '#9a8ad0')
+  for (const [ly, lw] of [[DY - 6, 4], [DY - 5, 3], [DY - 4, 4], [DY - 3, 2]] as [number, number][]) padd.rect(DX + 21, ly, lw, 1, '#5a6a9a')
+  // the claw gripping the bottom edge
+  padd.rect(DX + 19, DY - 2, 1, 2, k.skin).rect(DX + 22, DY - 2, 1, 2, k.skin).rect(DX + 19, DY - 1, 4, 1, k.skin).set(DX + 19, DY - 2, k.light)
+  s += padd.svg()
+  // the line he is reading glows a little brighter, moving down the screen
+  ;[[DY - 6, 4], [DY - 5, 3], [DY - 4, 4], [DY - 3, 2]].forEach(([ly, lw], i) => {
+    s += `<g opacity="0">${new DsPix().rect(DX + 21, ly, lw, 1, '#a8c0f0').svg()}<animate attributeName="opacity" calcMode="discrete" values="0;1;0;0" keyTimes="0;${(0.1 + 0.2 * i).toFixed(2)};${(0.3 + 0.2 * i).toFixed(2)};1" dur="${per(4)}s" repeatCount="indefinite"/></g>`
+  })
+
+  // left claw: rests, then rises for the big second verse
+  const armLow = (() => {
+    const p = new DsPix()
+    p.rect(DX - 3, DY + 4, 3, 2, k.skin).rect(DX - 3, DY + 6, 3, 1, k.shade)
+    p.rect(DX - 5, DY + 2, 2, 3, k.skin)
+    p.rect(DX - 6, DY, 1, 2, k.skin).rect(DX - 3, DY, 1, 2, k.skin).rect(DX - 6, DY + 1, 4, 1, k.skin)
+    p.set(DX - 6, DY, k.light).set(DX - 3, DY, k.light)
+    return p.svg()
+  })()
+  // a step further: the forearm on a diagonal, the claw out at shoulder height
+  const armLow2 = (() => {
+    const p = new DsPix()
+    p.rect(DX - 3, DY + 4, 3, 2, k.skin).rect(DX - 3, DY + 6, 3, 1, k.shade)
+    p.rect(DX - 5, DY + 3, 2, 2, k.skin).rect(DX - 6, DY + 1, 2, 2, k.skin)
+    p.rect(DX - 7, DY - 1, 1, 2, k.skin).rect(DX - 4, DY - 1, 1, 2, k.skin).rect(DX - 7, DY, 4, 1, k.skin)
+    p.set(DX - 7, DY - 1, k.light).set(DX - 4, DY - 1, k.light)
+    return p.svg()
+  })()
+  const chain = [armLow, armLow2, armMidHD(k, DX, DY, 'left')]
+  const lift: [number, number] = [7.0, 9.2]
+  const st = 0.13
+  const win: [number, number][][] = [
+    [[lift[0], lift[0] + st], [lift[1] - st, lift[1]]],
+    [[lift[0] + st, lift[0] + 2 * st], [lift[1] - 2 * st, lift[1] - st]],
+    [[lift[0] + 2 * st, lift[1] - 2 * st]],
+  ]
+  s += shown(armRestHD(k, DX, DY, 'left'), complement([lift], T), T)
+  chain.forEach((c, i) => (s += shown(c, win[i], T)))
+
+  // eyes: Data's yellow eyes, one sprite per gaze, shut for blinks
+  const gaze: [number, number, DsGaze][] = [
+    [0, 3.0, 'ur'], [3.0, 4.6, 'dr'], [4.6, 6.2, 'ur'], [6.2, 7.1, 'dr'], [7.1, 9.1, 'ul'],
+    [9.1, 11.6, 'ur'], [11.6, 15.9, 'dr'], [15.9, T, 'ur'],
+  ]
+  const blinks: [number, number][] = [[1.8, 1.92], [5.3, 5.42], [10.4, 10.52], [16.5, 16.62]]
+  const ex = (g: DsGaze) => (g === 'ul' ? [4, 10] : g === 'c' ? [5, 11] : [6, 12])
+  const ey = (g: DsGaze) => (g === 'ur' || g === 'ul' ? 1 : 2)
+  const open = complement(blinks, T)
+  for (const g of ['ur', 'dr', 'ul'] as DsGaze[]) {
+    const w = merge(gaze.filter(z => z[2] === g).map(z => [z[0], z[1]] as [number, number]))
+    const e = new DsPix()
+    const shut = new DsPix()
+    for (const x of ex(g)) {
+      const X = DX + x
+      const Y = DY + ey(g)
+      e.rect(X, Y, 2, 3, '#e8b818').set(X, Y, '#f6d84a').set(X + 1, Y, '#f6d84a')
+      const px = g === 'ul' ? X : X + 1
+      e.rect(px, g === 'dr' ? Y + 1 : Y, 1, 2, '#3a2a08')
+      shut.rect(X, Y + 2, 2, 1, '#6a5a2a')
+    }
+    s += shown(e.svg(), dsInter(w, open), T)
+    const bw = dsInter(w, blinks)
+    if (bw.length) s += shown(shut.svg(), bw, T)
+  }
+
+  // ---------- the ode: a speech bubble filling with verse ----------
+  const BXL = 27
+  const BYT = 5
+  const bub = new DsPix()
+  bub.rect(BXL + 1, BYT, 17, 1, '#8a7658').rect(BXL, BYT + 1, 1, 9, '#8a7658').rect(BXL + 18, BYT + 1, 1, 9, '#8a7658').rect(BXL + 1, BYT + 10, 17, 1, '#8a7658')
+  bub.rect(BXL + 1, BYT + 1, 17, 9, '#ddcca8').rect(BXL + 1, BYT + 1, 17, 1, '#ebdcbc')
+  // its tail, pointing down at Data
+  bub.rect(BXL + 4, BYT + 10, 3, 1, '#ddcca8').rect(BXL + 4, BYT + 11, 2, 1, '#ddcca8').set(BXL + 4, BYT + 12, '#ddcca8')
+  bub.set(BXL + 3, BYT + 11, '#8a7658').set(BXL + 3, BYT + 12, '#8a7658').set(BXL + 4, BYT + 13, '#8a7658').set(BXL + 5, BYT + 12, '#8a7658').set(BXL + 6, BYT + 11, '#8a7658').set(BXL + 7, BYT + 10, '#8a7658')
+  let ode = bub.svg()
+  const INK = '#5a4632'
+  // a verse: an icon, then lines that write themselves in three strokes each
+  const verse = (icon: Pix, lines: [number, number, number][], t0: number, t1: number) => {
+    let v = shown(icon.svg(), [[t0, t1]], T)
+    let t = t0 + 0.3
+    for (const [x, y, w] of lines) {
+      const parts = [Math.ceil(w / 3), Math.ceil((2 * w) / 3), w]
+      parts.forEach((pw, i) => {
+        const a = t + i * 0.22
+        const b = i < 2 ? t + (i + 1) * 0.22 : t1
+        v += shown(new DsPix().rect(x, y, pw, 1, INK).svg(), [[a, b]], T)
+      })
+      t += 0.95
+    }
+    return v
+  }
+  // verse one: a little orange cat face
+  const catIcon = new DsPix()
+  catIcon.set(BXL + 2, BYT + 2, '#c86a2a').set(BXL + 5, BYT + 2, '#c86a2a').rect(BXL + 2, BYT + 3, 4, 3, '#e0873a').rect(BXL + 2, BYT + 3, 4, 1, '#f6ae5e')
+  catIcon.set(BXL + 3, BYT + 4, '#3a2a08').set(BXL + 5, BYT + 4, '#3a2a08').set(BXL + 3, BYT + 4, '#3a2a08')
+  ode += verse(catIcon, [[BXL + 8, BYT + 3, 9], [BXL + 8, BYT + 5, 7], [BXL + 2, BYT + 7, 13]], 1.5, 7.0)
+  // verse two: a small heart, the climax
+  const heart = new DsPix()
+  heart.set(BXL + 2, BYT + 3, '#d8566a').set(BXL + 4, BYT + 3, '#d8566a').rect(BXL + 2, BYT + 4, 3, 1, '#d8566a').set(BXL + 3, BYT + 5, '#d8566a').set(BXL + 2, BYT + 3, '#f08a9a')
+  ode += verse(heart, [[BXL + 7, BYT + 3, 10], [BXL + 7, BYT + 5, 8], [BXL + 2, BYT + 7, 14]], 7.2, 14.9)
+  s += `<g opacity="0">${ode}${dsFade([[0, 0], [0.9, 0], [1.4, 1], [14.9, 1], [15.5, 0]])}</g>`
+
+  // keep the title corner quiet
+  s += `<ellipse cx="${14 * Q}" cy="${48 * Q}" rx="${30 * Q}" ry="${8 * Q}" fill="url(#dsCorner)"/>`
+  return s
+}
+
+// ---------- Endgame: Voyager comes home ----------
+// One 17.17 s story on the bridge viewscreen. Calm: Earth below, three Starfleet
+// ships keeping watch. A transwarp aperture irises open and a Borg sphere slides
+// out of it. Thin cracks of green light creep across the sphere, it comes apart
+// gently, the pieces drift away, and the armoured Voyager glides out from inside.
+// The fleet closes in around her; Janeway allows herself a small satisfied smile.
+// Voyager heads on toward Earth, the ships settle back on station, and the
+// scene ends where it began.
+
+const EG_JANEWAY: CrabHD = {
+  skin: '#d97757',
+  light: '#eb9575',
+  shade: '#b85f43',
+  upper: '#b3262e', // command red shoulders
+  lower: '#16121c', // black Voyager jacket
+  lowerShade: '#0c0a10',
+  legs: '#16121c',
+  rim: '#f6a77c',
+}
+
+const egT = SCENE_SECONDS
+const egK = (t: number) => +(t / egT).toFixed(4)
+// an ambient period that divides the story exactly
+const egPer = (n: number) => +(egT / n).toFixed(5)
+const EG_IO = '0.42 0 0.58 1'
+const EG_OUT = '0.2 0.6 0.4 1'
+const EG_IN = '0.5 0 0.8 0.6'
+const EG_LIN = '0 0 1 1'
+const EG_GLIDE = '0.3 0 0.4 1'
+
+// Pix written as one <path> per colour
+function egPath(p: Pix) {
+  const m = (p as any).m as Map<number, Map<number, string>>
+  const by = new Map<string, string>()
+  for (const [y, row] of m) {
+    const xs = [...row.keys()].sort((a, b) => a - b)
+    let i = 0
+    while (i < xs.length) {
+      const c = row.get(xs[i])!
+      let j = i
+      while (j + 1 < xs.length && xs[j + 1] === xs[j] + 1 && row.get(xs[j + 1]) === c) j++
+      const w = (xs[j] - xs[i] + 1) * Q
+      by.set(c, (by.get(c) || '') + `M${xs[i] * Q} ${y * Q}h${w}v${Q}h-${w}z`)
+      i = j + 1
+    }
+  }
+  let out = ''
+  for (const [c, d] of by) out += `<path fill="${c}" d="${d}"/>`
+  return out
+}
+
+const egR = (x: number, y: number, w: number, h: number, c: string, extra = '') =>
+  `<rect x="${x * Q}" y="${y * Q}" width="${w * Q}" height="${h * Q}" fill="${c}"${extra}/>`
+
+// opacity on the story: [t, v] points, padded to 0 and the end (linear between points)
+function egRamp(pts: [number, number][]) {
+  const all: [number, number][] = [...(pts[0][0] > 0 ? [[0, pts[0][1]] as [number, number]] : []), ...pts]
+  if (all[all.length - 1][0] < egT) all.push([egT, all[all.length - 1][1]])
+  return `<animate attributeName="opacity" dur="${egT}s" repeatCount="indefinite" values="${all.map(p => p[1]).join(';')}" keyTimes="${all.map(p => egK(p[0])).join(';')}"/>`
+}
+
+// any transform on the story: [t, value, spline into it], padded to 0 and the end
+function egTween(type: string, keys: [number, string, string?][]) {
+  const k = [...keys]
+  if (k[0][0] > 0) k.unshift([0, k[0][1], EG_LIN])
+  if (k[k.length - 1][0] < egT) k.push([egT, k[k.length - 1][1], EG_LIN])
+  const kt = k.map(([t]) => egK(t))
+  kt[kt.length - 1] = 1
+  return `<animateTransform attributeName="transform" type="${type}" calcMode="spline" dur="${egT}s" repeatCount="indefinite" values="${k.map(x => x[1]).join(';')}" keyTimes="${kt.join(';')}" keySplines="${k.slice(1).map(x => x[2] ?? EG_IO).join(';')}"/>`
+}
+// translate in art pixels
+const egMove = (keys: [number, number, number, string?][]) =>
+  egTween('translate', keys.map(([t, x, y, sp]) => [t, `${+(x * Q).toFixed(2)} ${+(y * Q).toFixed(2)}`, sp]))
+
+// Starfleet ships seen nose-on, waiting: saucer on top, nacelles below at the sides
+const EG_SHIP_PAL: Record<string, string> = {
+  h: '#c9ced8', H: '#8e94a2', d: '#5d6371', D: '#6fc8ff', R: '#ff6a52', N: '#4a5060', w: '#ffe2a0',
+}
+const EG_SHIPS: string[][] = [
+  // a Sovereign, the closest
+  ['...hhhhhhh...', '.hhHHHHHHHhh.', 'hHHHwHHHwHHHh', '..ddHHDHHdd..', '.N...dDd...N.', 'RN.........NR'],
+  // a Galaxy
+  ['..hhhhhhh..', 'hhHHHHHHHhh', '.ddHHDHHdd.', 'N...dDd...N', 'R.........R'],
+  // a smaller escort, farther off
+  ['.hhhhh.', 'hHHDHHh', 'Nd...dN', 'R.....R'],
+]
+
+function endgame() {
+  const T = egT
+  const W = GW * Q
+  const H = GH * Q
+  let seed = 2001
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
+
+  // ---- the beat sheet, in seconds (authored; the band plays it 1.72x faster) ----
+  const tOpen = 2.8 // the transwarp aperture begins to iris open
+  const tSphere = 3.6 // the sphere slides out of it...
+  const tSet = 6.0 // ...and settles; the aperture closes behind it
+  const tCrack = 6.4 // green cracks creep outward across the sphere
+  const tBreak = 9.0 // it comes apart, gently
+  const tVoy = 9.4 // Voyager glides out from inside
+  const tOut = 12.4 // she is clear; the fleet closes in
+  const tSmile = 12.5 // Janeway's small smile
+  const tHome = 14.0 // Voyager heads on toward Earth
+  const tGone = 16.3 // ...and is home; the fleet back on station
+  const tRelax = 15.9 // the smile settles back
+
+  // ---- screen area (art px) ----
+  const SX = 17
+  const SY = 1
+  const SW = 72
+  const SH = 26
+
+  let s = `<defs>
+    <linearGradient id="egFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="egFade"><rect x="-10" y="-10" width="${W + 20}" height="${H + 20}" fill="url(#egFadeG)"/></mask>
+    <linearGradient id="egWall" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#141019"/><stop offset="1" stop-color="#2a2133"/></linearGradient>
+    <linearGradient id="egSpace" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#05050c"/><stop offset="1" stop-color="#121228"/></linearGradient>
+    <radialGradient id="egNeb"><stop offset="0" stop-color="#9a7ad6" stop-opacity="0.2"/><stop offset="1" stop-color="#9a7ad6" stop-opacity="0"/></radialGradient>
+    <radialGradient id="egAtmo"><stop offset="0.82" stop-color="#7fc4ff" stop-opacity="0"/><stop offset="0.9" stop-color="#7fc4ff" stop-opacity="0.32"/><stop offset="1" stop-color="#7fc4ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="egBorgG"><stop offset="0" stop-color="#5dff8a" stop-opacity="0.5"/><stop offset="0.5" stop-color="#2fbf5a" stop-opacity="0.16"/><stop offset="1" stop-color="#2fbf5a" stop-opacity="0"/></radialGradient>
+    <radialGradient id="egHaze"><stop offset="0" stop-color="#3fdc6a" stop-opacity="0.14"/><stop offset="1" stop-color="#3fdc6a" stop-opacity="0"/></radialGradient>
+    <radialGradient id="egAper"><stop offset="0" stop-color="#06140c"/><stop offset="0.45" stop-color="#0d2a1a"/><stop offset="0.72" stop-color="#2f8a58" stop-opacity="0.8"/><stop offset="0.86" stop-color="#7fe0a8" stop-opacity="0.55"/><stop offset="1" stop-color="#3fae6c" stop-opacity="0"/></radialGradient>
+    <pattern id="egScan" width="4" height="4" patternUnits="userSpaceOnUse"><rect y="2" width="4" height="2" fill="#000" opacity="0.07"/></pattern>
+    <clipPath id="egScreen"><rect x="${SX * Q}" y="${SY * Q}" width="${SW * Q}" height="${SH * Q}"/></clipPath>
+  </defs>`
+
+  // ======== the bridge behind: wall, LCARS panel on the left, rail, floor ========
+  let back = `<rect x="-6" y="-6" width="${W + 12}" height="${H + 12}" fill="url(#egWall)"/>`
+  const lc = new Pix()
+  lc.rect(3, 4, 11, 18, '#0b0910')
+  lc.rect(4, 5, 9, 2, '#c9a7ff').rect(4, 7, 2, 13, '#c9a7ff').set(4, 5, '#0b0910')
+  lc.rect(7, 8, 3, 2, '#f29a3a').rect(11, 8, 2, 2, '#8aa7e8').rect(7, 11, 6, 1, '#f7c487')
+  lc.rect(7, 13, 2, 2, '#d9584a').rect(10, 13, 3, 2, '#c39be0').rect(7, 16, 6, 1, '#8aa7e8').rect(4, 20, 9, 1, '#8aa7e8')
+  back += `<g opacity="0.6">${egPath(lc)}</g>`
+  const low = new Pix()
+  low.rect(0, 28, GW, 4, '#221b2b').rect(0, 28, GW, 1, '#2f2639')
+  ;[[19, 6, '#c9a7ff'], [26, 3, '#f29a3a'], [30, 9, '#8aa7e8'], [52, 4, '#c39be0'], [57, 6, '#f7c487'], [64, 8, '#c9a7ff'], [73, 3, '#d9584a'], [77, 10, '#8aa7e8']].forEach(([x, w, c]) =>
+    low.rect(x as number, 30, w as number, 1, c as string),
+  )
+  low.rect(0, 32, GW, 1, '#8a8299').rect(0, 33, GW, 1, '#3a3346')
+  for (const x of [24, 50, 74]) low.rect(x, 34, 1, 2, '#3a3346')
+  low.rect(0, 34, GW, 14, '#1a1623').rect(0, 35, GW, 1, '#221d2d').rect(0, 40, GW, 1, '#1f1a29').rect(0, 45, GW, 1, '#16121e')
+  // the captain's chair, half in the band's fade
+  low.rect(8, 31, 9, 6, '#3c3346').rect(8, 31, 9, 1, '#5a5068').rect(9, 32, 7, 4, '#4a4056')
+  low.rect(6, 36, 13, 2, '#3c3346').rect(6, 36, 13, 1, '#5a5068').rect(11, 38, 3, 2, '#2a2332')
+  back += egPath(low)
+  s += `<g mask="url(#egFade)">${back}</g>`
+
+  // ======== the viewscreen ========
+  const bez = new Pix()
+  bez.rect(SX - 1, SY - 1, SW + 2, SH + 2, '#0e0b12').rect(SX, SY + SH, SW, 1, '#3a3142').rect(SX - 1, SY, 1, SH, '#2a2330')
+  s += `<g mask="url(#egFade)">${egPath(bez)}</g>`
+
+  let scr = egR(SX, SY, SW, SH, 'url(#egSpace)')
+  scr += `<ellipse cx="${46 * Q}" cy="${7 * Q}" rx="60" ry="20" fill="url(#egNeb)"/>`
+  const stars = [new Pix(), new Pix(), new Pix()]
+  for (let y = SY + 1; y < SY + SH; y += 2) {
+    for (let x = SX + 1; x < SX + SW; x += 3) {
+      if (rnd() < 0.7) continue
+      stars[Math.floor(rnd() * 3)].set(x + (y % 3), y, '#cdbaf0')
+    }
+  }
+  stars.forEach((d, i) => (scr += `<g opacity="${0.18 + i * 0.14}">${egPath(d)}</g>`))
+  ;[[24, 4], [52, 24], [61, 2], [86, 9], [30, 22]].forEach(([x, y], i) => {
+    const glow = new Pix()
+    glow.set(x - 1, y, '#bfa8ee').set(x + 1, y, '#bfa8ee').set(x, y - 1, '#bfa8ee').set(x, y + 1, '#bfa8ee')
+    scr += `<g>${egPath(glow)}<animate attributeName="opacity" values="0.15;0.7;0.15" calcMode="spline" keyTimes="0;0.5;1" keySplines="${EG_IO};${EG_IO}" dur="${egPer(5 - (i % 3))}s" begin="-${(i * 0.7).toFixed(1)}s" repeatCount="indefinite"/></g>`
+    scr += egPath(new Pix().set(x, y, '#ffffff'))
+  })
+
+  // ---- Earth, low on the right: oceans, land, cloud, the night side, a thin blue rim ----
+  const ex = 81
+  const ey = 33
+  const er = 13
+  const earth = new Pix()
+  for (let y = -er; y <= er; y++) {
+    for (let x = -er; x <= er; x++) {
+      const d = Math.sqrt(x * x + y * y)
+      if (d > er + 0.3 || ey + y > SY + SH) continue
+      const n = Math.sin(x * 0.55 + Math.sin(y * 0.7) * 1.4) + Math.cos(y * 0.45 - x * 0.2)
+      let c = n > 0.9 ? '#4f9a5a' : n > 0.7 ? '#6f9a4a' : '#2f6fc0'
+      if (Math.sin(x * 0.3 + y * 1.3) > 0.82) c = '#e8eef6'
+      else if (Math.sin(x * 0.3 + y * 1.3) > 0.62 && c === '#2f6fc0') c = '#a9c8ea'
+      // night falls on the lower right
+      const lit = (-x * 0.5 - y * 0.85) / er
+      if (lit < -0.55) c = c === '#2f6fc0' ? '#0e1f3c' : c === '#e8eef6' ? '#3a4a66' : '#14301e'
+      else if (lit < -0.3) c = c === '#2f6fc0' ? '#1f4a8a' : c === '#e8eef6' ? '#8a9ab4' : '#2f6a3c'
+      if (d > er - 0.8 && lit > -0.3) c = '#9fd0ff'
+      earth.set(ex + x, ey + y, c)
+    }
+  }
+  // city lights on the night side
+  ;[[86, 26], [89, 24], [84, 27], [88, 27]].forEach(([x, y]) => earth.set(x, y, '#ffd27a'))
+  scr += `<circle cx="${(ex + 0.5) * Q}" cy="${(ey + 0.5) * Q}" r="${(er + 3) * Q}" fill="url(#egAtmo)"/>` + egPath(earth)
+  // the Moon, small and far
+  const moon = new Pix()
+  moon.rect(84, 3, 2, 3, '#cfc6dc').rect(83, 4, 1, 1, '#a99fbc').rect(86, 4, 1, 1, '#8e85a2').set(85, 5, '#a99fbc')
+  scr += egPath(moon)
+
+  // ---- the transwarp aperture: a ring of green light that irises open, then closed ----
+  const acx = (34 + 0.5) * Q
+  const acy = (13 + 0.5) * Q
+  {
+    let ring = `<circle cx="0" cy="0" r="${11 * Q}" fill="url(#egAper)"/>`
+    // the vortex: arcs of light turning slowly
+    let arcs = ''
+    for (let i = 0; i < 6; i++) {
+      const a0 = (i / 6) * Math.PI * 2
+      const r = 8.5 * Q
+      const x0 = Math.cos(a0) * r
+      const y0 = Math.sin(a0) * r
+      const x1 = Math.cos(a0 + 0.6) * r * 0.85
+      const y1 = Math.sin(a0 + 0.6) * r * 0.85
+      arcs += `<path d="M${x0.toFixed(1)} ${y0.toFixed(1)} Q ${(Math.cos(a0 + 0.3) * r * 1.02).toFixed(1)} ${(Math.sin(a0 + 0.3) * r * 1.02).toFixed(1)} ${x1.toFixed(1)} ${y1.toFixed(1)}" stroke="${i % 2 ? '#9dffc0' : '#4fd08a'}" stroke-width="1.5" fill="none" opacity="0.7"/>`
+    }
+    ring += `<g>${arcs}<animateTransform attributeName="transform" type="rotate" values="0;360" dur="${egPer(3)}s" repeatCount="indefinite"/></g>`
+    const scale = egTween('scale', [[0, '0.1'], [tOpen, '0.1', EG_LIN], [tOpen + 1.6, '1', EG_OUT], [tSet - 0.4, '1', EG_LIN], [tSet + 1.2, '0.1', EG_IO]])
+    scr += `<g opacity="0"><g transform="translate(${acx} ${acy})"><g>${ring}${scale}</g></g>${egRamp([[tOpen, 0], [tOpen + 0.9, 1], [tSet, 1], [tSet + 1.2, 0]])}</g>`
+  }
+
+  // ---- the Borg sphere: shaded plating, a machinery grid, green lights; seven pieces ----
+  const SCX = 38
+  const SCY = 13
+  const SR = 8.4
+  const NP = 6
+  const shades = ['#262b32', '#323840', '#3f464f', '#4d555f', '#5d6670', '#6f7884', '#848e99']
+  const L = [0.5, -0.62, 0.6]
+  const pieceOf = (x: number, y: number) => {
+    const d = Math.sqrt(x * x + y * y)
+    const a = Math.atan2(y, x) + 0.16 * Math.sin(d * 1.7 + 1.7) + 0.35
+    return ((Math.floor(((a + Math.PI) / (Math.PI * 2)) * NP) % NP) + NP) % NP
+  }
+  const inside = (x: number, y: number) => Math.sqrt(x * x + y * y) <= SR + 0.2
+  const pieces = Array.from({ length: NP }, () => ({ p: new Pix(), cr: [new Pix(), new Pix(), new Pix()], lights: new Pix(), sx: 0, sy: 0, n: 0 }))
+  const R = Math.ceil(SR) + 1
+  for (let y = -R; y <= R; y++) {
+    for (let x = -R; x <= R; x++) {
+      if (!inside(x, y)) continue
+      const d = Math.sqrt(x * x + y * y)
+      const nx = x / (SR + 0.6)
+      const ny = y / (SR + 0.6)
+      const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny))
+      const lv = Math.max(0, nx * L[0] + ny * L[1] + nz * L[2])
+      let idx = Math.round(lv * 5.2)
+      if ((x + 30) % 3 === 0 || (y + 30) % 3 === 0) idx -= 1
+      const r = rnd()
+      if (r < 0.12) idx += 1
+      else if (r < 0.2) idx -= 1
+      let c = shades[Math.max(0, Math.min(6, idx))]
+      if (d > SR - 0.7 && lv > 0.55) c = '#a3acb6'
+      if (d > SR - 0.7 && lv < 0.2) c = '#1c2026'
+      const k = pieceOf(x, y)
+      const pc = pieces[k]
+      pc.p.set(SCX + x, SCY + y, c)
+      pc.sx += x
+      pc.sy += y
+      pc.n++
+      // a crack runs along every seam between two pieces
+      const seam = (inside(x + 1, y) && pieceOf(x + 1, y) !== k) || (inside(x, y + 1) && pieceOf(x, y + 1) !== k)
+      if (seam) pc.cr[d < 3.2 ? 0 : d < 6 ? 1 : 2].set(SCX + x, SCY + y, d < 3.2 ? '#c8ffd6' : (x + y) % 2 ? '#7dffa0' : '#4fe07a')
+    }
+  }
+  // green lights in the machinery, a few of which breathe
+  const lightPts: [number, number][] = [[-4, -3], [2, -5], [5, -1], [-2, 2], [3, 4], [-5, 3], [0, -1], [6, 3], [-3, -6], [1, 6]]
+  lightPts.forEach(([x, y], i) => {
+    const pc = pieces[pieceOf(x, y)]
+    pc.p.set(SCX + x, SCY + y, '#2f8f4a')
+    if (i % 2 === 0) pc.lights.set(SCX + x, SCY + y, '#8dffa8')
+  })
+
+  let sphere = `<circle cx="${(SCX + 0.5) * Q}" cy="${(SCY + 0.5) * Q}" r="${(SR + 6) * Q}" fill="url(#egHaze)"/>`
+  // the green light from inside, growing as the cracks spread and fading as the pieces part
+  sphere += `<circle cx="${(SCX + 0.5) * Q}" cy="${(SCY + 0.5) * Q}" r="${7 * Q}" fill="url(#egBorgG)" opacity="0">${egRamp([[tCrack + 0.4, 0], [tCrack + 1.8, 0.7], [tBreak + 0.4, 0.75], [tBreak + 2.4, 0]])}</circle>`
+  const crackT = [tCrack, tCrack + 0.8, tCrack + 1.6]
+  pieces.forEach((pc, k) => {
+    const len = Math.hypot(pc.sx, pc.sy) || 1
+    const dist = 11 + ((k * 37) % 5)
+    const dx = (pc.sx / len) * dist
+    const dy = (pc.sy / len) * dist * 0.8
+    let g = egPath(pc.p)
+    g += `<g>${egPath(pc.lights)}<animate attributeName="opacity" values="0.25;0.9;0.25" calcMode="spline" keyTimes="0;0.5;1" keySplines="${EG_IO};${EG_IO}" dur="${egPer(4)}s" begin="-${(k * 0.55).toFixed(2)}s" repeatCount="indefinite"/></g>`
+    pc.cr.forEach((cp, n) => {
+      const a = crackT[n]
+      g += `<g opacity="0">${egPath(cp)}${egRamp([[a, 0], [a + 0.9, 1], [tBreak + 0.6, 1], [tBreak + 3.2, 0.3], [tHome, 0.15], [tHome + 1.2, 0]])}</g>`
+    })
+    // the pieces part slowly, quick at first and then slower and slower; they fade as they drift
+    const mv = egMove([[0, 0, 0], [tBreak, 0, 0, EG_LIN], [tGone - 0.6, dx, dy, EG_OUT], [tGone - 0.5, 0, 0, EG_LIN]])
+    sphere += `<g>${g}${mv}</g>`
+  })
+  // while the cracks spread, the sphere trembles: half an art pixel, smoothly
+  const shake: [number, number, number, string?][] = [[0, 0, 0], [tCrack + 0.6, 0, 0, EG_LIN]]
+  for (let t = tCrack + 1.1, n = 0; t < tBreak - 0.3; t += 0.5, n++) shake.push([t, n % 2 ? -0.5 : 0.5, n % 2 ? 0 : 0.5])
+  shake.push([tBreak, 0, 0])
+  sphere = `<g>${sphere}${egMove(shake)}</g>`
+  // it slides out of the aperture toward us, growing, and settles
+  const cx = (SCX + 0.5) * Q
+  const cy = (SCY + 0.5) * Q
+  const arrive = egTween('scale', [[0, '0.3'], [tSphere, '0.3', EG_LIN], [tSet, '1', EG_OUT], [tGone - 0.5, '1', EG_LIN], [tGone - 0.4, '0.3', EG_LIN]])
+  const slide = egMove([[0, -4, 0], [tSphere, -4, 0, EG_LIN], [tSet, 0, 0, EG_OUT], [tGone - 0.5, 0, 0, EG_LIN], [tGone - 0.4, -4, 0, EG_LIN]])
+  scr += `<g opacity="0"><g transform="translate(${cx} ${cy})"><g>${slide}<g>${arrive}<g transform="translate(${-cx} ${-cy})">${sphere}</g></g></g></g>${egRamp([[tSphere, 0], [tSphere + 0.8, 1], [tBreak + 3.4, 1], [tGone - 0.8, 0]])}</g>`
+
+  // ---- Starfleet, nose-on, keeping watch; they close in around Voyager, then settle back ----
+  const fleet: { art: string[]; x: number; y: number; to: [number, number] }[] = [
+    { art: EG_SHIPS[1], x: 77, y: 3, to: [-3, 5] },
+    { art: EG_SHIPS[2], x: 60, y: 3, to: [-9, 0] },
+    { art: EG_SHIPS[0], x: 66, y: 20, to: [-6, -1] },
+  ]
+  fleet.forEach((f, i) => {
+    const art = egPath(new Pix().rows(f.art, f.x, f.y, EG_SHIP_PAL))
+    const w = f.art[0].length
+    const nav = new Pix().set(f.x + Math.floor(w / 2), f.y - 1, '#ff6a52')
+    const blink = `<g opacity="0">${egPath(nav)}<animate attributeName="opacity" calcMode="discrete" values="0;1;0" keyTimes="0;0.5;0.62" dur="${egPer(6 - i)}s" begin="-${i * 0.9}s" repeatCount="indefinite"/></g>`
+    const mv = egMove([[0, 0, 0], [tOut - 0.6 + i * 0.25, 0, 0, EG_LIN], [tHome + i * 0.2, f.to[0], f.to[1]], [tHome + 0.6 + i * 0.2, f.to[0], f.to[1], EG_LIN], [tGone - 0.2 + i * 0.15, 0, 0]])
+    scr += `<g>${art}${blink}${mv}</g>`
+  })
+
+  // ---- Voyager, armoured: arrowhead saucer, slim secondary hull, nacelles up on short pylons ----
+  const vPal: Record<string, string> = {
+    n: '#8a909c', N: '#4e535e', g: '#5fb6ff', R: '#ff5a4a', p: '#5a5f6b',
+    L: '#c3c8d0', a: '#a3a8b2', A: '#7a7f8b', B: '#686d79', d: '#454a55', e: '#2e323b', w: '#ffd98a', D: '#7fd0ff', t: '#d6dbe3',
+  }
+  const vp = new Pix()
+  const x0 = 11 // the back of the saucer
+  const vy = 6 // its centre line
+  // far nacelle, up on its pylon, behind everything
+  vp.set(1, 0, 'N').rect(2, 0, 10, 1, 'n').set(12, 0, 'R')
+  vp.set(1, 1, 'N')
+  for (let i = 2; i < 12; i++) vp.set(i, 1, i % 2 ? 'e' : 'g')
+  vp.set(12, 1, 'N')
+  ;[[8, 2], [9, 2], [9, 3], [10, 3], [10, 4], [11, 4]].forEach(([x, y]) => vp.set(x, y, 'p'))
+  // slim secondary hull under the saucer's back half, deflector glowing at its front
+  vp.rect(x0 - 5, vy + 3, 14, 1, 'B').rect(x0 - 7, vy + 4, 15, 1, 'd').rect(x0 - 4, vy + 5, 9, 1, 'e')
+  vp.set(x0 - 6, vy + 3, 'e').set(x0 + 8, vy + 4, 'D').set(x0 + 9, vy + 4, 'D').set(x0 + 7, vy + 5, 'D')
+  // the arrowhead saucer seen a little from above: broad at the back, drawn to a point
+  const SL = 20
+  for (let u = 0; u < SL; u++) {
+    const hw = u < 6 ? 4.6 - (u === 0 ? 1.4 : 0) : (4.6 * (SL - u)) / (SL - 6)
+    const top = Math.round(vy - hw * 0.62)
+    const bot = Math.round(vy + hw * 0.38)
+    for (let y = top; y <= bot; y++) {
+      let c = y === top ? 'L' : y < vy ? 'a' : 'A'
+      // the ablative armour: staggered plates with dark seams
+      if (y !== top && (u + (y % 2) * 2) % 5 === 0) c = 'd'
+      vp.set(x0 + u, y, c)
+    }
+    // the rim beneath, with a row of lit windows
+    if (hw > 0.8) vp.set(x0 + u, bot + 1, u % 3 === 1 && u < SL - 3 ? 'w' : 'B')
+  }
+  vp.set(x0 + 6, vy - 4, 't').set(x0 + 7, vy - 4, 't') // the bridge dome
+  // near nacelle, in front: its pylon rises from the hull side
+  ;[[9, 7], [10, 8], [11, 8]].forEach(([x, y]) => vp.set(x, y, 'p'))
+  vp.set(0, 5, 'N').rect(1, 5, 10, 1, 'n').set(11, 5, 'R')
+  vp.set(0, 6, 'N')
+  for (let i = 1; i < 11; i++) vp.set(i, 6, i % 2 ? 'g' : 'e')
+  vp.set(11, 6, 'N').rect(1, 7, 9, 1, 'N')
+  // colour it in
+  const vm = (vp as any).m as Map<number, Map<number, string>>
+  for (const row of vm.values()) for (const [x, c] of row) row.set(x, vPal[c] || c)
+  const VW = x0 + SL
+  const VH = 12
+  let voy = egPath(vp)
+  // impulse glow at the back of the saucer and the nose light, breathing slowly
+  voy += `<g>${egPath(new Pix().set(x0, vy, '#ff8a5a'))}<animate attributeName="opacity" values="0.5;1;0.5" dur="${egPer(6)}s" repeatCount="indefinite"/></g>`
+  voy += `<g>${egPath(new Pix().set(VW - 1, vy, '#ffffff'))}<animate attributeName="opacity" values="0.3;1;0.3" dur="${egPer(5)}s" repeatCount="indefinite"/></g>`
+  const vc = `translate(${-(VW / 2) * Q} ${-(VH / 2) * Q})`
+  // emerges at the sphere's heart, grows as it comes toward us, holds, then heads for Earth
+  const vMove = egMove([[0, SCX, SCY], [tVoy, SCX, SCY, EG_LIN], [tOut, 56, 13, EG_GLIDE], [tHome, 57, 13], [tGone - 0.3, ex - 7, ey - 13, EG_IO], [tGone, ex - 7, ey - 13, EG_LIN], [tGone + 0.05, SCX, SCY, EG_LIN]])
+  const vScale = egTween('scale', [[0, '0.45'], [tVoy, '0.45', EG_LIN], [tOut, '1', EG_GLIDE], [tHome, '1', EG_LIN], [tGone - 0.3, '0.3', EG_IO], [tGone, '0.3', EG_LIN], [tGone + 0.05, '0.45', EG_LIN]])
+  scr += `<g opacity="0"><g transform="translate(${Q / 2} ${Q / 2})"><g>${vMove}<g>${vScale}<g transform="${vc}">${voy}</g></g></g></g>${egRamp([[tVoy, 0], [tVoy + 0.9, 1], [tHome + 1.3, 1], [tGone - 0.3, 0]])}</g>`
+
+  // the screen glass: scanlines and a faint glint
+  scr += egR(SX, SY, SW, SH, 'url(#egScan)')
+  scr += `<polygon points="${80 * Q},${SY * Q} ${88 * Q},${SY * Q} ${88 * Q},${(SY + 7) * Q}" fill="#ffffff" opacity="0.04"/>`
+  s += `<g clip-path="url(#egScreen)">${scr}</g>`
+
+  // ======== ops console on the right ========
+  const con = new Pix()
+  con.rect(63, 35, 25, 1, '#9a8fa6').rect(62, 36, 27, 1, '#0b0910')
+  con.rect(63, 36, 4, 1, '#f29a3a').rect(68, 36, 3, 1, '#8aa7e8').rect(72, 36, 5, 1, '#c39be0').rect(78, 36, 3, 1, '#f7c487').rect(82, 36, 5, 1, '#8aa7e8')
+  con.rect(62, 37, 27, 6, '#3a3346').rect(62, 37, 27, 1, '#544a63').rect(62, 42, 27, 1, '#241e2d')
+  for (const x of [69, 77, 85]) con.rect(x, 38, 1, 4, '#2a2433')
+  s += egPath(con)
+  ;[[64, 39], [72, 40], [80, 39]].forEach(([x, y], i) => {
+    s += `<g>${egR(x, y, 2, 1, i === 1 ? '#7dffa0' : '#f7c487')}<animate attributeName="opacity" values="1;0.45;1" dur="${egPer(6 + i)}s" repeatCount="indefinite"/></g>`
+  })
+
+  // ======== Janeway: auburn bun, black jacket, red shoulders, four pips ========
+  const k = EG_JANEWAY
+  const jx = 31
+  const jy = 31
+  const { p: jp, ex: eyes } = clawdBody(k, jx, jy, 'right')
+  const hair = '#8a3a1e'
+  const hairL = '#b2522a'
+  const dark = '#5e2412'
+  jp.rect(jx + 1, jy, 15, 1, hair).rect(jx + 4, jy, 9, 1, hairL)
+  jp.rect(jx, jy + 1, 2, 3, hair).set(jx + 2, jy + 1, hair).set(jx, jy + 3, dark)
+  jp.rect(jx + 2, jy - 1, 11, 1, hair).rect(jx + 5, jy - 1, 6, 1, hairL)
+  jp.rows(['.bbb.', 'bLLbb', 'bLbbd', '.bbd.'], jx, jy - 4, { b: hair, L: hairL, d: dark })
+  for (const c of [12, 13, 14, 15]) jp.set(jx + c, jy + 7, '#e8c547')
+  jp.rect(jx + 4, jy + 6, 2, 2, '#e8c547').set(jx + 4, jy + 6, '#fff3b0')
+  let jn = egPath(jp)
+  jn += armRestHD(k, jx, jy, 'left') + armRestHD(k, jx, jy, 'right')
+  // the smile comes in four drawings, and settles back the same way
+  const mouth = '#5a2216'
+  const sm = [new Pix(), new Pix(), new Pix(), new Pix()]
+  sm[0].rect(jx + 9, jy + 5, 2, 1, k.shade)
+  sm[1].rect(jx + 9, jy + 5, 2, 1, mouth)
+  sm[2].rect(jx + 9, jy + 5, 2, 1, mouth).set(jx + 8, jy + 4, k.shade).set(jx + 11, jy + 4, k.shade)
+  sm[3].rect(jx + 9, jy + 5, 2, 1, mouth).set(jx + 8, jy + 4, mouth).set(jx + 11, jy + 4, mouth)
+  // ...the last with the eyes crinkling: cheeks lift into the bottom of each eye
+  eyes.forEach(e => sm[3].rect(jx + e, jy + 4, 2, 1, k.light))
+  const st = 0.17
+  sm.forEach((p, i) => {
+    const on: [number, number][] = i < 3
+      ? [[tSmile + i * st, tSmile + (i + 1) * st], [tRelax + (2 - i) * st, tRelax + (3 - i) * st]]
+      : [[tSmile + 3 * st, tRelax]]
+    jn += shown(egPath(p), on, T)
+  })
+  // blinks, on a period that divides the story
+  const lids = new Pix()
+  eyes.forEach(e => lids.rect(jx + e, jy + 2, 2, 3, k.skin))
+  jn += `<g opacity="0">${egPath(lids)}<animate attributeName="opacity" calcMode="discrete" dur="${egPer(4)}s" begin="-1.2s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.93;0.96"/></g>`
+  s += jn
+
+  return s
+}
+
+// ---------- Threshold: "warp ten, and then salamanders" ----------
+// One 17.17 s story. The shuttle Cochrane cruises through calm space with Clawd-Paris
+// at the controls. He opens her up: the stars stretch slowly into long streaks and the
+// shuttle smears into soft echoes of itself (warp ten: everywhere at once), all motion,
+// no light. A slow cross-dissolve lands us on a murky swamp world, the shuttle parked
+// in the reeds. Clawd-Paris and Clawd-Janeway stand on a mossy bank by the water and
+// slowly turn, one in-between drawing at a time, into two spotted orange salamanders
+// with red collars. Three babies wriggle up out of the water; a little heart rises.
+// Then the swamp dissolves back into the same calm space the story opened on.
+
+const thT = SCENE_SECONDS
+const thK = (t: number) => +(t / thT).toFixed(4)
+const thPer = (n: number) => +(thT / n).toFixed(5)
+const TH_EASE = '0.45 0 0.55 1'
+
+// Pix written as one <path> per colour
+function thPath(p: Pix) {
+  const m = (p as any).m as Map<number, Map<number, string>>
+  const by = new Map<string, string>()
+  for (const [y, row] of m) {
+    const xs = [...row.keys()].sort((a, b) => a - b)
+    let i = 0
+    while (i < xs.length) {
+      const c = row.get(xs[i])!
+      let j = i
+      while (j + 1 < xs.length && xs[j + 1] === xs[j] + 1 && row.get(xs[j + 1]) === c) j++
+      const w = (xs[j] - xs[i] + 1) * Q
+      by.set(c, (by.get(c) || '') + `M${xs[i] * Q} ${y * Q}h${w}v${Q}h-${w}z`)
+      i = j + 1
+    }
+  }
+  let out = ''
+  for (const [c, d] of by) out += `<path fill="${c}" d="${d}"/>`
+  return out
+}
+
+// a value track on the story timeline, eased between keys; held flat where values repeat
+function thTrack(attr: string, keys: [number, number | string][]) {
+  const all = [...keys]
+  if (all[0][0] > 0) all.unshift([0, all[0][1]])
+  if (all[all.length - 1][0] < thT) all.push([thT, all[all.length - 1][1]])
+  const sp = all.slice(1).map(([, v], i) => (v === all[i][1] ? '0 0 1 1' : TH_EASE))
+  return `<animate attributeName="${attr}" calcMode="spline" dur="${thT}s" repeatCount="indefinite" values="${all.map(k => k[1]).join(';')}" keyTimes="${all.map(k => thK(k[0])).join(';')}" keySplines="${sp.join(';')}"/>`
+}
+
+// an eased translate on the story timeline, keys in grid units
+function thMove(keys: [number, number, number][], ease = TH_EASE) {
+  const all = [...keys]
+  if (all[0][0] > 0) all.unshift([0, all[0][1], all[0][2]])
+  if (all[all.length - 1][0] < thT) all.push([thT, all[all.length - 1][1], all[all.length - 1][2]])
+  const v = all.map(k => `${+(k[1] * Q).toFixed(2)} ${+(k[2] * Q).toFixed(2)}`)
+  const sp = all.slice(1).map((_, i) => (v[i] === v[i + 1] ? '0 0 1 1' : ease))
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${thT}s" repeatCount="indefinite" values="${v.join(';')}" keyTimes="${all.map(k => thK(k[0])).join(';')}" keySplines="${sp.join(';')}"/>`
+}
+
+// a gentle ambient sway: a -> b -> a over one loop period (a whole fraction of the story)
+function thSway(dx: number, dy: number, n: number, begin = 0) {
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" values="0 0;${dx * Q} ${dy * Q};0 0" keyTimes="0;0.5;1" keySplines="${TH_EASE};${TH_EASE}" dur="${thPer(n)}s" begin="${begin}s" repeatCount="indefinite"/>`
+}
+
+const thOp = (keys: [number, number][]) => thTrack('opacity', keys)
+
+// ---- the Cochrane: a class-2 shuttle in side view, nose to the right, Paris at the window ----
+const TH_SHUTTLE = [
+  '..........hHHHHHHHHHHHH.......',
+  '........hHHHHHHHHHHHHHHHH.....',
+  '.......hHHHHHHHHHHHHHwwwwwH...',
+  '.....bhhhhhhhhhhhhhhwoLLLowHH.',
+  '....bbhhhhhhhhhhhhhhwoEoEowhhH',
+  '...ibhhpppppppppppppppppphhhhh',
+  '...ibshhhhhhhhhhhhhhhhhhhhhhhs',
+  '...ibsssssssssssssssssssssssd.',
+  '..DDsnnnnNNNNNNNNnnnnnrdddd...',
+  '...DDDDDDDDDDDDDDDDDDDDD......',
+]
+const TH_SHUTTLE_PAL: Record<string, string> = {
+  H: '#e6e2ee', h: '#b8b2c8', s: '#7c7692', d: '#4e4862', D: '#3a3450', b: '#5a5470',
+  w: '#24304e', o: '#d97757', L: '#eb9575', E: '#1a1020', p: '#b3262e',
+  n: '#3f9fd8', N: '#9fe0ff', r: '#ff6a4a', i: '#ff9a5a',
+}
+
+// ---- the crabs ----
+const TH_PARIS: CrabHD = {
+  skin: '#d97757', light: '#eb9575', shade: '#b85f43',
+  upper: '#b3262e', lower: '#1c1424', lowerShade: '#120c18',
+  legs: '#1c1424', rim: '#f0a07a',
+}
+const TH_JANE: CrabHD = { ...TH_PARIS }
+
+// Salamander palette (shares Clawd's orange)
+const TH_SAL = {
+  L: '#eb9575', o: '#d97757', d: '#b85f43', D: '#8f4a34', sp: '#5a2a20', y: '#f2c46a',
+  r: '#b3262e', rl: '#d0454a', k: '#1c1424', E: '#1a1020', toe: '#c86848', gold: '#e8c547',
+}
+
+// One step of the turn from crab to salamander. m = 1, 2 or 3 (3 = salamander).
+// Drawn facing right in local columns (0 = tail tip), mirrored for a left-facing one.
+function thSal(m: number, look: Side, cx: number, G: number, who: 'paris' | 'jane') {
+  const P = TH_SAL
+  const Bl = [18, 19, 19, 20][m]
+  const Tl = [0, 3, 7, 11][m]
+  const Hb = [10, 9, 7, 6][m]
+  const legH = [4, 3, 2, 2][m]
+  const L = Tl + Bl
+  const x0 = cx - Math.floor(L / 2)
+  const yb = G - legH // bottom row of the body
+  const yTop = yb - Hb + 1 // top row of the body (before insets)
+  const p = new Pix()
+  const X = (x: number) => (look === 'right' ? x0 + x : x0 + (L - 1 - x))
+  const put = (x: number, y: number, c: string) => p.set(X(x), y, c)
+  const tops: number[] = []
+  const bots: number[] = []
+  const s = m / 3
+  const collar = m === 2 ? [0.5, 0.62] : [0.54, 0.62]
+
+  // legs first (they sit under the body)
+  if (m === 1) {
+    ;[1, 5, 12, 16].forEach((lx, i) => {
+      const bx = Tl + lx
+      for (let y = yb + 1; y <= G; y++) {
+        const out = y === G ? (i === 0 ? -1 : i === 3 ? 1 : 0) : 0
+        put(bx + out, y, P.k).set(X(bx + 1 + out), y, P.k)
+      }
+    })
+  } else {
+    const legs: [number, number, string][] = m === 2
+      ? [[Tl + 4, -1, P.D], [Tl + 13, 1, P.D], [Tl + 1, -1, P.d], [Tl + 15, 1, P.d]]
+      : [[Tl + 5, -1, P.D], [Tl + 12, 1, P.D], [Tl + 1, -1, P.o], [Tl + 15, 1, P.o]]
+    for (const [lx, dir, c] of legs) {
+      put(lx, yb + 1, c)
+      put(lx + 1, yb + 1, c)
+      // the foot reaches out along the ground, toes splayed
+      put(lx + dir, G, c)
+      put(lx + 1 + dir, G, c)
+      put(lx + (dir > 0 ? 3 : -2), G, c === P.D ? P.D : P.toe)
+      if (m === 3) put(lx + (dir > 0 ? 2 : -1), G, c === P.D ? P.D : P.toe)
+    }
+  }
+
+  // the tail: tapering from the body to the tip, the tip curling up
+  for (let j = 0; j < Tl; j++) {
+    const f = (j + 1) / Tl
+    const th = Math.max(1, Math.round(f * Hb * 0.5))
+    const lift = Math.round([0, 0, 1, 3][m] * (1 - f) * (1 - f))
+    const b = yb - lift
+    for (let y = b - th + 1; y <= b; y++) put(j, y, y === b - th + 1 ? P.L : y === b && th > 1 ? P.d : P.o)
+  }
+  if (m === 3) put(0, yb - 4, P.L)
+
+  // the body column by column
+  for (let i = 0; i < Bl; i++) {
+    const u = i / (Bl - 1)
+    let t = i === 0 || i === Bl - 1 ? 1 : 0
+    let b = i === 0 || i === Bl - 1 ? 1 : 0
+    if (m >= 2) {
+      if (u < 0.3) t += Math.round(((0.3 - u) / 0.3) * (Hb - 3) * s)
+      if (i === 0) b = 0
+      if (u > collar[0] - 0.02 && u < collar[1] + 0.02) t += 1 // the neck dips a little
+      if (i === Bl - 1) (t += 1), (b += 1)
+      if (i === Bl - 2) t += 1
+    }
+    const top = yTop + t
+    const bot = yb - b
+    tops.push(top)
+    bots.push(bot)
+    const inCollar = m >= 2 && u >= collar[0] && u <= collar[1]
+    for (let y = top; y <= bot; y++) {
+      const r = y - yTop
+      let c = P.o
+      if (y === top) c = P.L
+      if (m === 1 && r >= 5) c = r >= 7 ? P.k : P.r // the uniform, still mostly there
+      if (m >= 2 && y === bot) c = u < collar[0] ? P.k : P.d // the black of the suit under the belly
+      if (inCollar) c = y === top ? P.rl : P.r
+      if (i === 0 && y > top && c === P.o) c = P.d
+      if (i === Bl - 1 && y > top && c === P.o) c = '#f0a07a'
+      put(Tl + i, y, c)
+    }
+    if (inCollar && i === Math.round(collar[0] * (Bl - 1)) + 1) put(Tl + i, top + 2, P.gold) // combadge
+  }
+
+  // spots: dark, and a few yellow on the last two drawings
+  const spots: [number, number, string][] = [
+    [0.35, 0.3, P.sp], [0.12, 0.5, P.sp], [0.47, 0.55, P.sp],
+    [0.25, 0.25, P.sp], [0.4, 0.75, P.y], [0.7, 0.3, P.sp], [0.2, 0.7, P.y],
+    [0.3, 0.55, P.sp], [0.5, 0.2, P.sp], [0.8, 0.6, P.y], [0.45, 0.35, P.y],
+  ]
+  spots.slice(0, [0, 3, 7, 11][m]).forEach(([u, v, c]) => {
+    const i = Math.round(u * (Bl - 1))
+    const y = Math.round(tops[i] + 1 + v * Math.max(0, bots[i] - tops[i] - 2))
+    if (y > tops[i] && y < bots[i]) {
+      put(Tl + i, y, c)
+      if (c === P.sp && m === 3 && u < 0.5) put(Tl + i + 1, y, c)
+    }
+  })
+  // tail spots
+  if (m === 3) [2, 5, 8].forEach((j, n) => put(j, yb - Math.round(3 * (1 - (j + 1) / Tl) ** 2) - (n === 1 ? 1 : 0), P.sp))
+
+  // eyes: Clawd's two tall eyes, sliding forward and up onto the head as bumps
+  if (m === 1) [7, 13].forEach(e => [0, 1].forEach(dx => [2, 3, 4].forEach(dy => put(Tl + e + dx, yTop + dy, P.E))))
+  if (m === 2) [12, 16].forEach(e => [0, 1].forEach(dx => [1, 2].forEach(dy => put(Tl + e + dx, tops[e] + dy, P.E))))
+  if (m === 3) {
+    ;[13, 16].forEach((e, n) => {
+      const ht = Math.min(tops[e], tops[e + 1])
+      put(Tl + e, ht - 1, n ? P.L : P.d).set(X(Tl + e + 1), ht - 1, n ? P.L : P.d)
+      ;[0, 1].forEach(dx => [0, 1].forEach(dy => put(Tl + e + dx, ht + dy, P.E)))
+    })
+    // a contented smile along the jaw
+    ;[Bl - 5, Bl - 4, Bl - 3].forEach(i => put(Tl + i, bots[i] - 1, P.D))
+    put(Tl + Bl - 6, bots[Bl - 6] - 2, P.D)
+  }
+  // little stub arms on the first in-between
+  if (m === 1) {
+    put(-1 + Tl, yTop + 4, P.o).set(X(Tl - 2), yTop + 4, P.o).set(X(Tl - 2), yTop + 5, P.d)
+    put(Tl + Bl, yTop + 4, P.o).set(X(Tl + Bl + 1), yTop + 4, P.o).set(X(Tl + Bl + 1), yTop + 5, P.d)
+  }
+  // hair: Janeway keeps a little auburn bun to the end; Paris loses his sandy fringe
+  const A = '#8a4226'
+  const AL = '#b8643a'
+  if (who === 'jane') {
+    const bi = m === 1 ? 6 : m === 2 ? 8 : 9
+    const ht = tops[bi]
+    put(Tl + bi, ht - 1, A).set(X(Tl + bi + 1), ht - 1, AL).set(X(Tl + bi + 2), ht - 1, A)
+    put(Tl + bi + 1, ht - 2, A)
+    if (m < 3) put(Tl + bi - 1, ht, A).set(X(Tl + bi + 3), ht, A)
+    if (m === 1) for (let i = 2; i < Bl - 2; i++) if (i !== bi + 1) put(Tl + i, tops[i], i % 3 ? A : AL)
+  } else if (m === 1) {
+    for (let i = 9; i < Bl - 1; i++) put(Tl + i, tops[i], i % 2 ? '#d8b26a' : '#c49a52')
+  }
+  return p
+}
+
+// Clawd as himself, before the turn
+function thCrab(k: CrabHD, x: number, y: number, look: Side, who: 'paris' | 'jane') {
+  const { p } = clawdBody(k, x, y, look)
+  if (who === 'paris') {
+    p.rect(x + 1, y, 16, 1, '#d8b26a').rect(x + 2, y - 1, 5, 1, '#d8b26a').rect(x + 3, y - 1, 2, 1, '#eccb86')
+    p.set(x + 1, y + 1, '#c49a52').set(x + 16, y + 1, '#c49a52')
+    p.rect(x + 12, y + 7, 2, 2, '#e8c547').set(x + 12, y + 7, '#fff3b0') // combadge
+    p.set(x + 4, y + 6, '#e8c547') // one pip
+  } else {
+    const A = '#8a4226'
+    const AL = '#b8643a'
+    p.rect(x + 1, y, 16, 1, A).rect(x, y + 1, 2, 2, A).rect(x + 16, y + 1, 2, 2, A).rect(x + 4, y, 7, 1, AL)
+    p.rect(x + 11, y - 3, 5, 3, A).rect(x + 12, y - 4, 3, 1, A).rect(x + 12, y - 3, 2, 1, AL)
+    p.rect(x + 4, y + 7, 2, 2, '#e8c547').set(x + 4, y + 7, '#fff3b0')
+    for (const c of [11, 12, 13, 14]) p.set(x + c, y + 6, c % 2 ? '#e8c547' : '#b3262e')
+    p.set(x + 12, y + 6, '#e8c547').set(x + 14, y + 6, '#e8c547')
+  }
+  let s = thPath(p)
+  s += armRestHD(k, x, y, 'left') + armRestHD(k, x, y, 'right')
+  return s
+}
+
+// a baby salamander, 9 x 3, facing right
+const TH_BABY = [
+  '.......d.L.',
+  'L....LLEoEL',
+  '.oLLoosoooo',
+  '..dooooood.',
+  '...t.t..t.t',
+]
+
+// The finished salamander, facing right: eye bumps on a broad head, a smile, a red
+// collar with the combadge, the black of the uniform under the belly, spots, splayed
+// feet and a long tail curling up at the tip. 30 x 10, feet on the last row.
+const TH_SAL3 = [
+  '......................dd..LL..',
+  '.....................dEEdLEEL.',
+  '..............LLLLRRooEEooEEoL',
+  'LL.........LLLosoorroooooooooh',
+  'oo......LLLoosooyorgoooooooooh',
+  '.oo..LLLooosoooyoorroooDoooooo',
+  '..oooooosoooooosoorrooooDDDDDd',
+  '...dkkkkkkkkkkkkkkrrddddddddd.',
+  '.....oo..DD......DD...oo......',
+  '..totoo..DDD.....DDD..ootot...',
+]
+
+// the finished salamander, with slow blinks (skin over the eyes)
+function thSal3(look: Side, cx: number, G: number, who: 'paris' | 'jane', blinks: [number, number][]) {
+  const P = TH_SAL
+  const pal: Record<string, string> = {
+    L: P.L, o: P.o, d: P.d, D: P.D, s: P.sp, y: P.y, r: P.r, R: P.rl, k: P.k, E: P.E, g: P.gold, t: P.toe, h: '#f0a07a',
+    A: '#8a4226', a: '#b8643a',
+  }
+  const rows = TH_SAL3.map(r => r.split(''))
+  if (who === 'jane') {
+    // her auburn bun, kept to the end
+    rows[0][19] = 'A'
+    rows[1][18] = 'A'
+    rows[1][19] = 'a'
+    rows[1][20] = 'A'
+  }
+  const flip = (r: string[]) => (look === 'right' ? r : [...r].reverse())
+  const x0 = cx - 15
+  const y0 = G - 9
+  let out = thPath(new Pix().rows(rows.map(r => flip(r).join('')), x0, y0, pal))
+  const lid = rows.map((r, j) => r.map(c => (c === 'E' ? (j === 1 ? 'd' : 'o') : '.')))
+  out += shown(thPath(new Pix().rows(lid.map(r => flip(r).join('')), x0, y0, pal)), blinks, thT)
+  return out
+}
+
+function threshold() {
+  const W = GW * Q
+  const H = GH * Q
+
+  // ---- the story, in seconds ----
+  const WARP0 = 2.6 // Paris opens her up: the stars begin to stretch
+  const ECHO0 = 3.6 // the shuttle smears into echoes of itself
+  const ECHO1 = 5.0
+  const D1a = 5.4 // cross-dissolve to the swamp world
+  const D1b = 7.3
+  const M0 = 9.4 // the turn begins (Paris; Janeway a beat later)
+  const MSTEP = 1.1 // one drawing every 1.1 s
+  const MFADE = 0.35
+  const BABY = 12.9 // the babies wriggle up out of the water
+  const HEART = 13.8
+  const D2a = 15.1 // back to the calm space of the opening
+  const RESET = 11.0 // everything in space slips back to its start while the swamp covers it
+
+  let s = `<defs>
+    <linearGradient id="thSpace" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0a0918"/><stop offset="1" stop-color="#1a1534"/></linearGradient>
+    <radialGradient id="thNeb"><stop offset="0" stop-color="#7b5bc6" stop-opacity="0.24"/><stop offset="1" stop-color="#7b5bc6" stop-opacity="0"/></radialGradient>
+    <radialGradient id="thNeb2"><stop offset="0" stop-color="#3f8fa8" stop-opacity="0.16"/><stop offset="1" stop-color="#3f8fa8" stop-opacity="0"/></radialGradient>
+    <linearGradient id="thFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="thFade"><rect width="${W}" height="${H}" fill="url(#thFadeG)"/></mask>
+    <linearGradient id="thSwSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#16222a"/><stop offset="0.55" stop-color="#2a3a38"/><stop offset="1" stop-color="#46553e"/></linearGradient>
+    <linearGradient id="thWater" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2c3d3a"/><stop offset="1" stop-color="#14201f"/></linearGradient>
+    <radialGradient id="thSun"><stop offset="0" stop-color="#e2e6b0" stop-opacity="0.5"/><stop offset="0.5" stop-color="#b8c890" stop-opacity="0.16"/><stop offset="1" stop-color="#b8c890" stop-opacity="0"/></radialGradient>
+    <linearGradient id="thMist" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#9fb4a0" stop-opacity="0"/><stop offset="0.5" stop-color="#9fb4a0" stop-opacity="0.16"/><stop offset="1" stop-color="#9fb4a0" stop-opacity="0"/></linearGradient>
+    <radialGradient id="thNac"><stop offset="0" stop-color="#6fd0ff" stop-opacity="0.4"/><stop offset="1" stop-color="#6fd0ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="thFly"><stop offset="0" stop-color="#e8ff9a" stop-opacity="0.5"/><stop offset="1" stop-color="#e8ff9a" stop-opacity="0"/></radialGradient>
+  </defs>`
+
+  let seed = 1996
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
+
+  // ================= SPACE =================
+  let space = `<rect width="${W}" height="${H}" fill="url(#thSpace)"/>`
+  space += `<ellipse cx="${28 * Q}" cy="${12 * Q}" rx="70" ry="22" fill="url(#thNeb)"/>`
+  space += `<ellipse cx="${66 * Q}" cy="${36 * Q}" rx="60" ry="18" fill="url(#thNeb2)"/>`
+  // a slow drifting starfield: a 45-column tile, three copies, sliding one tile per story
+  const tile = [new Pix(), new Pix(), new Pix()]
+  for (let y = 1; y < GH - 1; y += 3) {
+    for (let x = 0; x < 45; x += 3) {
+      if (rnd() < 0.5) continue
+      const sx = x + Math.floor(rnd() * 2)
+      const b = Math.floor(rnd() * 3)
+      for (const off of [0, 45, 90]) tile[b].set(sx + off, y, '#cdbaf0')
+    }
+  }
+  space += `<g>${tile.map((t, i) => `<g opacity="${[0.16, 0.3, 0.5][i]}">${thPath(t)}</g>`).join('')}<animateTransform attributeName="transform" type="translate" values="0 0;${-45 * Q} 0" dur="${thT}s" repeatCount="indefinite"/></g>`
+  // a few bright twinkling stars
+  ;[[22, 5], [70, 4], [84, 30], [48, 40], [12, 26]].forEach(([x, y], i) => {
+    const glow = new Pix().set(x - 1, y, '#bfa8ee').set(x + 1, y, '#bfa8ee').set(x, y - 1, '#bfa8ee').set(x, y + 1, '#bfa8ee')
+    space += `<g>${thPath(glow)}<animate attributeName="opacity" values="0.15;0.75;0.15" dur="${thPer([6, 5, 4, 7, 5][i])}s" begin="${(-i * 0.53).toFixed(2)}s" repeatCount="indefinite"/></g>`
+    space += thPath(new Pix().set(x, y, '#ffffff'))
+  })
+  // the swamp planet ahead, small and green, where this is all going
+  {
+    const pl = new Pix()
+    const px = 79
+    const py = 10
+    for (let y = -5; y <= 5; y++) {
+      for (let x = -5; x <= 5; x++) {
+        const d = x * x + y * y
+        if (d > 28) continue
+        const band = Math.sin(y * 1.3 + x * 0.25)
+        let c = band > 0.3 ? '#4f7a54' : band > -0.4 ? '#3d6248' : '#5e8a5a'
+        if (x + y < -4) c = '#7aa070'
+        if (x + y > 3) c = '#26402f'
+        if (d > 22) c = x + y < 0 ? '#8fbf88' : '#1e3326'
+        pl.set(px + x, py + y, c)
+      }
+    }
+    space += `<circle cx="${(px + 0.5) * Q}" cy="${(py + 0.5) * Q}" r="17" fill="#7fc89a" opacity="0.07"/>` + thPath(pl)
+  }
+
+  // warp streaks: stars stretch back into long lines, then (unseen) shrink back
+  let streaks = ''
+  const SC = ['#9fb8ff', '#c9a7ff', '#e6e0ff', '#8fd0ff']
+  for (let i = 0; i < 22; i++) {
+    const y = 2 + Math.floor(rnd() * 42)
+    const hx = 30 + Math.floor(rnd() * 62)
+    if (y > 15 && y < 29 && hx > 30 && hx < 66) continue // not through the shuttle
+    const len = 14 + Math.floor(rnd() * 22)
+    const st = WARP0 + rnd() * 0.8
+    const op = (0.35 + rnd() * 0.35).toFixed(2)
+    streaks += `<rect x="${hx * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="${SC[i % 4]}" opacity="0">${thTrack('width', [[st, Q], [st + 1.8, len * Q], [RESET, len * Q], [RESET + 0.5, Q]])}${thTrack('x', [[st, hx * Q], [st + 1.8, (hx - len) * Q], [RESET, (hx - len) * Q], [RESET + 0.5, hx * Q]])}${thOp([[st, 0], [st + 0.6, +op], [RESET, +op], [RESET + 0.5, 0]])}</rect>`
+  }
+  space += `<g>${streaks}${thMove([[WARP0, 0, 0], [D1b, -22, 0], [RESET, -22, 0], [RESET + 0.5, 0, 0]], '0.5 0 0.8 1')}</g>`
+
+  // the shuttle: idles with a slow bob; at warp ten it surges ahead and leaves echoes
+  const shut = thPath(new Pix().rows(TH_SHUTTLE, 0, 0, TH_SHUTTLE_PAL))
+  const nac = `<ellipse cx="${14 * Q}" cy="${8.5 * Q}" rx="${12 * Q}" ry="${2.5 * Q}" fill="url(#thNac)"/>`
+  const sx = 32
+  const sy = 17
+  let echoes = ''
+  ;[[-8, 0.4], [-16, 0.24], [-24, 0.12]].forEach(([dx, o], i) => {
+    echoes += `<g opacity="0"><g transform="translate(${dx * Q} 0)">${shut}</g>${thOp([[ECHO0 + i * 0.3, 0], [ECHO1 + i * 0.2, o], [D1b + 0.4, o], [RESET, 0]])}</g>`
+  })
+  space += `<g transform="translate(${sx * Q} ${sy * Q})"><g>${thMove([[WARP0, 0, 0], [ECHO1, 10, 0], [RESET, 10, 0], [RESET + 0.6, 0, 0]], '0.5 0 0.3 1')}<g>${thSway(0, 1, 4)}${echoes}${nac}${shut}</g></g></g>`
+
+  // ================= THE SWAMP =================
+  let sw = `<rect width="${W}" height="${H}" fill="url(#thSwSky)"/>`
+  // a hazy alien sun, low and pale, and a thin ringed moon
+  sw += `<circle cx="${70 * Q}" cy="${11 * Q}" r="36" fill="url(#thSun)"/>`
+  {
+    const sun = new Pix()
+    for (let y = -4; y <= 4; y++) for (let x = -4; x <= 4; x++) {
+      const d = x * x + y * y
+      if (d > 18) continue
+      sun.set(70 + x, 11 + y, d > 12 ? '#b9c48e' : x + y < -2 ? '#e8ecc0' : '#d2daa6')
+    }
+    sw += `<g opacity="0.85">${thPath(sun)}</g>`
+    const moon = new Pix()
+    for (let y = -3; y <= 3; y++) for (let x = -3; x <= 3; x++) {
+      if (x * x + y * y > 10) continue
+      if ((x + 1.6) ** 2 + (y - 0.8) ** 2 < 7) continue // the shadowed part
+      moon.set(40 + x, 6 + y, x > 1 ? '#c2ccb4' : '#9aa894')
+    }
+    sw += thPath(moon)
+  }
+  // far tree line: cypress silhouettes with hanging moss
+  {
+    const far = new Pix()
+    const near = new Pix()
+    for (let c = 0; c < GW; c++) {
+      const h = 21 + Math.round(1.5 * Math.sin(c / 3.1) + 1.2 * Math.sin(c / 7.3 + 1))
+      far.rect(c, h, 1, 31 - h, '#24332f')
+      far.set(c, h, '#2e3f39')
+    }
+    // tall cypresses, flared at the base, with moss strands
+    ;[[6, 9], [19, 12], [33, 8], [52, 10], [63, 13], [86, 7]].forEach(([x, top]) => {
+      for (let y = top; y < 31; y++) {
+        const w = y < top + 3 ? 1 : y > 27 ? 3 + (y - 27) : 2
+        near.rect(x - Math.floor(w / 2), y, w, 1, '#1a2622')
+      }
+      // the canopy: a flat-topped crown
+      for (let j = 0; j < 5; j++) {
+        const w = [5, 9, 11, 9, 5][j]
+        near.rect(x - Math.floor(w / 2), top - 2 + j, w, 1, j === 0 ? '#2c4034' : '#1f2e28')
+      }
+      ;[-4, -2, 2, 4].forEach((dx, n) => {
+        const len = 2 + ((x + n) % 3)
+        for (let k = 0; k < len; k++) near.set(x + dx, top + 3 + k, k === len - 1 ? '#5a7a52' : '#46604a')
+      })
+    })
+    sw += thPath(far) + thPath(near)
+  }
+  // a band of mist drifting slowly back and forth across the tree line
+  sw += `<g><rect x="${-20 * Q}" y="${24 * Q}" width="${80 * Q}" height="${6 * Q}" fill="url(#thMist)"/>${thSway(30, 0, 1)}</g>`
+  // the water
+  sw += `<rect x="0" y="${31 * Q}" width="${W}" height="${17 * Q}" fill="url(#thWater)"/>`
+  {
+    const w = new Pix()
+    w.rect(0, 31, GW, 1, '#3e5450')
+    // reflections of the trees and the sun
+    for (let c = 0; c < GW; c++) if ((c * 7) % 11 < 4) w.set(c, 32 + (c % 3), '#1c2a28')
+    for (let j = 0; j < 4; j++) w.rect(67 - j, 33 + j * 2, 6 + 2 * j, 1, j % 2 ? '#7a8a6a' : '#8f9e74')
+    sw += thPath(w)
+  }
+  // ripples drifting slowly
+  {
+    const r = new Pix()
+    for (let i = 0; i < 9; i++) {
+      const y = 33 + Math.floor(rnd() * 14)
+      const x = Math.floor(rnd() * 90)
+      if (x < 34 && y > 40) continue // keep the title corner calm
+      r.rect(x, y, 3 + Math.floor(rnd() * 4), 1, '#3a4e4a')
+      r.rect(x + 45, y, 3, 1, '#344744')
+    }
+    sw += `<g>${thPath(r)}${thSway(-4, 0, 2)}</g>`
+  }
+  // the Cochrane, landed in the reeds across the water
+  {
+    const lp = new Pix()
+    const lx = 22
+    const ly = 26
+    lp.rect(lx + 2, ly, 10, 1, '#b8b2c8').rect(lx + 1, ly + 1, 13, 1, '#9c96b0').rect(lx, ly + 2, 15, 1, '#8a849e')
+    lp.rect(lx + 10, ly + 1, 3, 1, '#24304e').set(lx + 11, ly + 1, '#4f6a8a')
+    lp.rect(lx, ly + 3, 15, 1, '#5a5470').rect(lx + 1, ly + 3, 9, 1, '#3f7fa8').rect(lx + 2, ly + 2, 10, 1, '#a8a2b8')
+    lp.rect(lx + 2, ly + 2, 1, 1, '#b3262e')
+    sw += thPath(lp)
+    sw += thPath(new Pix().rect(lx - 1, ly + 4, 17, 1, '#2a3a38').rect(lx + 1, ly + 5, 13, 1, '#344642'))
+  }
+  // the mossy bank the two of them sit on
+  {
+    const bank = new Pix()
+    for (let c = 30; c < GW; c++) {
+      const top = 37 + (c < 34 ? 34 - c : 0) + Math.round(0.6 * Math.sin(c / 2.3))
+      bank.rect(c, top, 1, 42 - top, '#3b3226')
+      bank.set(c, top, c % 4 ? '#557a38' : '#6b8f44')
+      if (c % 3 === 0) bank.set(c, top + 1, '#46642e')
+      bank.set(c, 41, '#2a241c')
+    }
+    // a reflection of the bank, broken by the ripples
+    for (let c = 31; c < GW; c += 2) bank.set(c, 42, '#22302c')
+    sw += thPath(bank)
+  }
+  // reeds and cattails, swaying a little
+  const reeds = (xs: number[], base: number, n: number) => {
+    const r = new Pix()
+    xs.forEach((x, i) => {
+      const h = 6 + ((x * 5) % 5)
+      for (let y = base - h; y < base; y++) r.set(x, y, i % 2 ? '#5e7a38' : '#4e6a30')
+      r.rect(x, base - h - 2, 1, 3, '#6b3d22').set(x, base - h - 2, '#8a5232').set(x, base - h - 3, '#5e7a38')
+    })
+    return `<g>${thPath(r)}${thSway(1, 0, n, -i0(n))}</g>`
+  }
+  const i0 = (n: number) => +(n * 0.37).toFixed(2)
+  sw += reeds([20, 23, 37, 39], 31, 3)
+  sw += reeds([86, 88], 38, 4)
+  // lily pads with a pink flower
+  {
+    const lily = new Pix()
+    ;[[44, 44], [52, 46], [80, 44]].forEach(([x, y], i) => {
+      lily.rect(x, y, 4, 1, '#3f6b3a').set(x + 1, y, '#2a4a2a').rect(x + 1, y - 1, 2, 1, '#4f7e44')
+      if (i === 2) lily.set(x + 1, y - 2, '#ff9ec4').set(x + 2, y - 2, '#ffd0e2').set(x + 2, y - 3, '#ff9ec4')
+    })
+    sw += `<g>${thPath(lily)}${thSway(0, 0.5, 3)}</g>`
+  }
+  // fireflies drifting on loops that divide the story
+  for (let i = 0; i < 5; i++) {
+    const x = 44 + i * 9
+    const y = 16 + (i % 3) * 4
+    const d = thPer([3, 4, 2, 5, 3][i])
+    sw += `<g opacity="0"><circle cx="${x * Q + 1}" cy="${y * Q + 1}" r="4" fill="url(#thFly)"/><rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#e8ff9a"/><animateMotion path="M0 0 q ${i % 2 ? 8 : -8} -6 ${i % 2 ? 2 : -3} -10 t ${i % 2 ? -6 : 6} 4 z" dur="${d}s" begin="${(-i * 0.7).toFixed(2)}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.15;0.9;0.15" calcMode="spline" keyTimes="0;0.5;1" keySplines="${TH_EASE};${TH_EASE}" dur="${d}s" begin="${(-i * 0.7).toFixed(2)}s" repeatCount="indefinite"/></g>`
+  }
+
+  // ---- the two of them ----
+  const G = 37
+  const PX = 36
+  const JX = 66
+  const CY = G - 13
+  // Paris: crab, then three steps of the turn; Janeway the same, a beat later
+  const who: [CrabHD, number, Side, 'paris' | 'jane', number, number[]][] = [
+    [TH_PARIS, PX, 'right', 'paris', 0, [PX + 9, 45, 44, 41]],
+    [TH_JANE, JX, 'left', 'jane', 0.35, [JX + 9, 75, 75, 75]],
+  ]
+  for (const [k, x, look, w, lag, cxs] of who) {
+    const blinks: [number, number][] = w === 'paris' ? [[13.0, 13.14], [14.6, 14.74]] : [[13.4, 13.54], [15.0, 15.14]]
+    const draw = [thCrab(k, x, CY, look, w), ...[1, 2].map(m => thPath(thSal(m, look, cxs[m], G, w))), thSal3(look, cxs[3], G, w, blinks)]
+    let g = ''
+    for (let m = 0; m < 4; m++) {
+      const tin = M0 + lag + (m - 1) * MSTEP // this drawing fades in on top
+      const tout = M0 + lag + m * MSTEP + MFADE // and fades out once the next is in
+      const keys: [number, number][] =
+        m === 0 ? [[tout, 1], [tout + MFADE, 0]]
+          : m === 3 ? [[0, 0], [tin, 0], [tin + MFADE, 1]]
+            : [[0, 0], [tin, 0], [tin + MFADE, 1], [tout, 1], [tout + MFADE, 0]]
+      let art = draw[m]
+      if (m === 0) {
+        // blinks and a happy little hop before the turn
+        const ex = look === 'left' ? [4, 10] : [6, 12]
+        const lids = new Pix()
+        ex.forEach(e => lids.rect(x + e, CY + 2, 2, 3, k.skin))
+        art = `<g>${art}${shown(thPath(lids), w === 'paris' ? [[7.7, 7.82], [8.3, 8.42]] : [[7.9, 8.02], [8.75, 8.87]], thT)}${hopQ(w === 'paris' ? [[8.7, 9.0]] : [[8.9, 9.2]], thT)}</g>`
+      }
+      if (m === 3) {
+        // slow blinks as salamanders, and a nuzzle toward each other
+        art = `<g>${art}${thMove([[0, 0, 0], [HEART - 0.6, 0, 0], [HEART, look === 'right' ? 1 : -1, 0], [D2a + 0.5, look === 'right' ? 1 : -1, 0], [D2a + 1.2, 0, 0]])}</g>`
+      }
+      g += `<g opacity="${m === 0 ? 1 : 0}">${art}${thOp(keys)}</g>`
+    }
+    sw += g
+  }
+  // babies wriggle up out of the water and settle in front of their parents
+  {
+    const baby = (flip: boolean) => {
+      const rows = flip ? TH_BABY.map(r => [...r].reverse().join('')) : TH_BABY
+      return thPath(new Pix().rows(rows, 0, 0, { L: '#eb9575', o: '#d97757', E: '#1a1020', d: '#b85f43' }))
+    }
+    const bs: [number, number, boolean, number, number][] = [
+      [36, 39, false, 0, 3], [54, 40, true, 0.5, 4], [70, 39, true, 0.9, 5],
+    ]
+    bs.forEach(([x, y, flip, lag, n]) => {
+      const t0 = BABY + lag
+      sw += `<g opacity="0"><g transform="translate(${x * Q} ${y * Q})"><g>${thMove([[t0, 0, 3], [t0 + 1.0, 0, 0], [t0 + 2.0, flip ? -2 : 2, 0]])}<g>${thSway(flip ? -1 : 1, 0, n * 2)}${baby(flip)}</g></g></g>${thOp([[t0, 0], [t0 + 0.6, 1]])}</g>`
+    })
+    // the water they came up through, drawn over their feet
+    sw += thPath(new Pix().rect(40, 43, 40, 1, '#22302c').rect(40, 44, 40, 1, '#1c2a28'))
+  }
+  // a small heart rising between the two heads
+  {
+    const h = new Pix().rows(['.pp.pp.', 'pPPpppp', 'ppppppp', '.ppppp.', '..ppp..', '...p...'], 54, 22, { p: '#ff7fa8', P: '#ffc4d8' })
+    sw += `<g opacity="0"><g>${thPath(h)}${thMove([[HEART, 0, 2], [D2a + 0.6, 0, -6]], '0.3 0 0.6 1')}</g>${thOp([[HEART, 0], [HEART + 0.7, 1], [D2a, 1], [D2a + 0.8, 0]])}</g>`
+  }
+
+  // ---- composite: space underneath, the swamp dissolving in and out on top ----
+  const swamp = `<g opacity="0">${sw}${thOp([[D1a, 0], [D1b, 1], [D2a, 1], [thT, 0]])}</g>`
+  s += `<g mask="url(#thFade)">${space}${swamp}</g>`
+  return s
+}
+
+// ---------- Timeless: Voyager in the ice ----------
+// One 17.17 s story, played once, starting and ending on the same quiet shot:
+//  0.0 - 2.6   a pale overcast sky, snow falling. Voyager lies tilted and half buried
+//              in the ice. Old Chakotay and old Harry Kim stand in their parkas, looking.
+//  2.6 - 6.2   they walk slowly across the ice to the ship.
+//  6.2 - 8.8   they stop and look up at her.
+//  8.8 - 12.0  Kim reaches out and lays his claw on the frozen hull, eyes closed; a little
+//              frost glints where he touches it and loose snow slides off.
+// 12.0 - 17.17 he lowers his claw; they turn and walk back to where they stood, and look
+//              at her once more.
+// Snow, breath and drifting cloud run on loops that divide the story exactly.
+
+const TL_T = SCENE_SECONDS
+
+const TL_KIM: CrabHD = {
+  skin: '#d97757',
+  light: '#eb9575',
+  shade: '#b85f43',
+  legs: '#2b2733',
+  rim: '#f3a582',
+}
+const TL_CHAK: CrabHD = { ...TL_KIM, skin: '#cf7052', light: '#e08b6c', shade: '#ad583e', rim: '#eb9a78' }
+
+const tlK = (t: number) => +(t / TL_T).toFixed(5)
+const tlPer = (n: number) => +(TL_T / n).toFixed(5) // a loop that divides the story exactly
+
+// Pix written as one <path> per colour (smaller than one rect per run)
+function tlPath(p: Pix) {
+  const m = (p as any).m as Map<number, Map<number, string>>
+  const by = new Map<string, string>()
+  for (const [y, row] of m) {
+    const xs = [...row.keys()].sort((a, b) => a - b)
+    let i = 0
+    while (i < xs.length) {
+      const c = row.get(xs[i])!
+      let j = i
+      while (j + 1 < xs.length && xs[j + 1] === xs[j] + 1 && row.get(xs[j + 1]) === c) j++
+      const w = (xs[j] - xs[i] + 1) * Q
+      by.set(c, (by.get(c) || '') + `M${xs[i] * Q} ${y * Q}h${w}v${Q}h-${w}z`)
+      i = j + 1
+    }
+  }
+  let out = ''
+  for (const [c, d] of by) out += `<path fill="${c}" d="${d}"/>`
+  return out
+}
+
+// an eased translate on the story timeline: [time, x, y] in art px; holds where it doesn't move
+function tlMove(keys: [number, number, number][], ease = '0.42 0 0.58 1') {
+  const all = [...keys]
+  if (all[0][0] > 0) all.unshift([0, all[0][1], all[0][2]])
+  if (all[all.length - 1][0] < TL_T) all.push([TL_T, all[all.length - 1][1], all[all.length - 1][2]])
+  const sp = all.slice(1).map((k, i) => (k[1] === all[i][1] && k[2] === all[i][2] ? '0 0 1 1' : ease))
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${TL_T}s" repeatCount="indefinite" values="${all.map(k => `${+(k[1] * Q).toFixed(2)} ${+(k[2] * Q).toFixed(2)}`).join(';')}" keyTimes="${all.map(k => tlK(k[0])).join(';')}" keySplines="${sp.join(';')}"/>`
+}
+
+// a smooth opacity curve on the story timeline: [time, value]
+function tlFade(pts: [number, number][]) {
+  const all = [...pts]
+  if (all[0][0] > 0) all.unshift([0, all[0][1]])
+  if (all[all.length - 1][0] < TL_T) all.push([TL_T, all[all.length - 1][1]])
+  const sp = all.slice(1).map(() => '0.4 0 0.6 1')
+  return `<animate attributeName="opacity" calcMode="spline" dur="${TL_T}s" repeatCount="indefinite" values="${all.map(p => p[1]).join(';')}" keyTimes="${all.map(p => tlK(p[0])).join(';')}" keySplines="${sp.join(';')}"/>`
+}
+
+// ---- the two of them: Clawd, older, grey at the temples, in parkas ----
+type TlCoat = { hair: string; hairL: string; collar: string; collarL: string; coat: string; coatD: string; coatL: string; trim: string }
+
+function tlBody(k: CrabHD, o: TlCoat, x: number, y: number) {
+  const p = new Pix()
+  for (let j = 0; j < 10; j++) {
+    const inset = j === 0 || j === 9 ? 1 : 0
+    let c = k.skin
+    if (j === 6) c = o.collar
+    if (j >= 7) c = o.coat
+    p.rect(x + inset, y + j, 18 - 2 * inset, 1, c)
+  }
+  // light and shade on the face (light from the sky, upper right)
+  p.rect(x + 1, y + 1, 16, 1, k.light)
+  p.rect(x, y + 1, 1, 5, k.shade)
+  p.rect(x + 17, y + 1, 1, 5, k.rim)
+  // grey hair, receding, grey at the temples
+  p.rect(x + 1, y, 16, 1, o.hair)
+  for (const c of [3, 6, 10, 13]) p.set(x + c, y, o.hairL)
+  p.set(x, y + 1, o.hair).set(x + 17, y + 1, o.hair).set(x + 1, y + 1, o.hairL).set(x + 16, y + 1, o.hairL)
+  // collar with a soft highlight, coat with a zip, pockets, shade on the far side
+  for (const c of [2, 5, 8, 11, 14]) p.set(x + c, y + 6, o.collarL)
+  p.rect(x, y + 7, 1, 2, o.coatD).set(x + 1, y + 9, o.coatD)
+  p.rect(x + 1, y + 7, 16, 1, o.coatL)
+  p.rect(x + 9, y + 7, 1, 3, o.trim)
+  p.rect(x + 3, y + 8, 3, 1, o.coatD).rect(x + 13, y + 8, 3, 1, o.coatD)
+  return p
+}
+
+// legs (boots): 0 standing, 1 / 2 the two steps of a walk
+function tlLegs(k: CrabHD, x: number, y: number, frame: number) {
+  const p = new Pix()
+  ;[1, 5, 11, 15].forEach((lx, i) => {
+    const up = (frame === 1 && i % 2 === 0) || (frame === 2 && i % 2 === 1)
+    p.rect(x + lx + (up ? 1 : 0), y + 10, 2, up ? 3 : 4, k.legs)
+    p.set(x + lx + (up ? 1 : 0), y + 10, '#3d3846')
+  })
+  return tlPath(p)
+}
+
+// eyes: R looking right, U right and up, H half-way to the left, L left; X closed
+function tlEyes(x: number, y: number, st: string) {
+  if (st === 'X') return ''
+  const p = new Pix()
+  const ex = st === 'L' ? [4, 10] : st === 'H' ? [5, 11] : [6, 12]
+  const dy = st === 'U' ? 1 : 2
+  ex.forEach(e => p.rect(x + e, y + dy, 2, 3, EYE_HD))
+  return tlPath(p)
+}
+function tlEyeTrack(x: number, y: number, segs: [number, number, string][]) {
+  const by = new Map<string, [number, number][]>()
+  for (const [a, b, st] of segs) {
+    if (!by.has(st)) by.set(st, [])
+    by.get(st)!.push([a, b])
+  }
+  let s = ''
+  for (const [st, w] of by) if (st !== 'X') s += shown(tlEyes(x, y, st), w, TL_T)
+  // closed: a lash line where the eyes were
+  if (by.has('X')) {
+    const p = new Pix()
+    ;[6, 12].forEach(e => p.rect(x + e, y + 4, 2, 1, '#8a4630'))
+    s += shown(tlPath(p), by.get('X')!, TL_T)
+  }
+  return s
+}
+
+// Kim's right arm reaching out to the hull: three drawings between rest and the touch
+function tlReach(k: CrabHD, x: number, y: number, stage: number) {
+  const p = new Pix()
+  if (stage === 1) {
+    // the forearm swings out and down a little
+    p.rect(x + 18, y + 4, 3, 2, k.skin).rect(x + 18, y + 6, 3, 1, k.shade)
+    p.rect(x + 21, y + 5, 1, 3, k.skin).set(x + 22, y + 5, k.light).set(x + 22, y + 7, k.skin)
+  } else if (stage === 2) {
+    // half out, claw opening
+    p.rect(x + 18, y + 4, 4, 1, k.skin).rect(x + 18, y + 5, 4, 1, k.shade)
+    p.rect(x + 22, y + 3, 1, 4, k.skin)
+    p.set(x + 23, y + 3, k.light).set(x + 23, y + 6, k.skin)
+  } else {
+    // all the way out, the open claw flat against the hull
+    p.rect(x + 18, y + 4, 5, 1, k.skin).rect(x + 18, y + 5, 5, 1, k.shade)
+    p.rect(x + 23, y + 3, 1, 4, k.skin)
+    p.set(x + 24, y + 3, k.skin).set(x + 25, y + 3, k.light)
+    p.set(x + 24, y + 6, k.skin).set(x + 25, y + 6, k.skin)
+  }
+  return tlPath(p)
+}
+
+// a breath in the cold: a small pale puff drifting up from the face, on a loop
+function tlBreath(x: number, y: number, n: number, off: number) {
+  const d = tlPer(n)
+  return `<rect x="${x * Q}" y="${y * Q}" width="${2 * Q}" height="${Q}" fill="#f7f9fc" opacity="0"><animateMotion path="M0 0 q 4 -3 5 -9" dur="${d}s" begin="${-off}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0;0.75;0;0" keyTimes="0;0.05;0.15;0.5;1" dur="${d}s" begin="${-off}s" repeatCount="indefinite"/></rect>`
+}
+
+// leg frames over the walking windows, one drawing every LEG s
+function tlLegPlan(walks: [number, number][]) {
+  const LEG = 0.24
+  const on: [number, number][][] = [[], [], []]
+  let last = 0
+  for (const [a, b] of walks) {
+    on[0].push([last, a])
+    const n = Math.max(4, Math.round((b - a) / LEG))
+    for (let i = 0; i < n; i++) on[[1, 0, 2, 0][i % 4]].push([a + (i * (b - a)) / n, a + ((i + 1) * (b - a)) / n])
+    last = b
+  }
+  on[0].push([last, TL_T])
+  return on
+}
+
+function tlCrab(
+  k: CrabHD, o: TlCoat, x: number, y: number,
+  walks: [number, number][], move: [number, number, number][],
+  eyes: [number, number, string][],
+  rightArm: string, extra: (p: Pix) => void, breathOff: number,
+) {
+  const p = tlBody(k, o, x, y)
+  extra(p)
+  let s = `<rect x="${(x + 1) * Q}" y="${(y + 14) * Q}" width="${16 * Q}" height="${Q}" fill="#c3cddd"/>`
+  s += `<rect x="${(x + 3) * Q}" y="${(y + 14) * Q}" width="${12 * Q}" height="${Q}" fill="#b4bfd2"/>`
+  s += tlPath(p)
+  const legs = tlLegPlan(walks)
+  for (const f of [0, 1, 2]) s += shown(tlLegs(k, x, y, f), legs[f], TL_T)
+  s += tlPath(new Pix().rect(x - 3, y + 4, 3, 2, k.skin).rect(x - 3, y + 6, 3, 1, k.shade))
+  s += rightArm
+  s += tlEyeTrack(x, y, eyes)
+  s += tlBreath(x + 18, y + 3, 6, breathOff)
+  return `<g>${s}${tlMove(move)}</g>`
+}
+
+// ---- Voyager: side on, nose to the left, tilted nose-down into the ice ----
+// Drawn flat on her own grid (u along the hull, v down), then sheared so the tilt stays
+// pixel-crisp, then outlined. Saucer, engineering hull with the dark deflector, and the
+// nacelles swept up and back on their pylons, the far one just showing behind the near one.
+function tlShip(X0: number, Y0: number, slope: number) {
+  const flat = new Map<string, string>()
+  const put = (u: number, v: number, c: string) => flat.set(`${u},${v}`, c)
+  const SNOW = '#f5f8fb'
+  const SNOW2 = '#dfe6ef'
+  const HULL = '#9099aa'
+  const HULL_L = '#b2bac7'
+  const HULL_D = '#737d90'
+  const UNDER = '#596274'
+  const WIN = '#353c4b'
+  const ICE = '#cfe2f1'
+
+  // far nacelle, a little higher and further back
+  for (let u = 34; u <= 52; u++) {
+    put(u, -14, u === 34 ? '#5e2c31' : SNOW2)
+    put(u, -13, u <= 35 ? '#6e3438' : '#6c768a')
+  }
+  // pylon, swept up and back from the engineering hull to the nacelle
+  for (let v = -9; v <= 2; v++) {
+    const u = 45 - Math.round((v + 9) * 0.4)
+    put(u - 1, v, v < -6 ? SNOW : HULL_L)
+    put(u, v, HULL)
+    put(u + 1, v, HULL_D)
+    put(u + 2, v, UNDER)
+  }
+  // near nacelle: snow on top, blue grille dark, bussard collector cold
+  for (let u = 30; u <= 51; u++) {
+    const rear = u > 48
+    put(u, -12, rear ? HULL_L : SNOW)
+    put(u, -11, HULL_L)
+    put(u, -10, u >= 35 && u <= 47 ? (u % 3 === 0 ? '#2e3850' : '#4f6288') : HULL)
+    if (!rear || u === 49) put(u, -9, HULL_D)
+  }
+  for (let v = -12; v <= -9; v++) {
+    put(30, v, v === -12 || v === -9 ? '#5e2c31' : '#7e3c3f')
+    put(31, v, v === -11 ? '#a2585a' : '#8a4648')
+    put(32, v, v === -12 ? '#c8b8bc' : '#7e3c3f')
+  }
+  put(29, -11, '#5e2c31'), put(29, -10, '#5e2c31')
+  ;[36, 41, 46].forEach(u => put(u, -8, ICE))
+
+  // engineering hull under the back of the saucer
+  for (let u = 15; u <= 46; u++) {
+    const h = u < 23 ? Math.round((u - 15) * 1.0) : u < 39 ? 8 : Math.round(8 - (u - 38) * 0.65)
+    for (let v = 2; v <= 2 + h; v++) {
+      let c = HULL
+      if (v === 2 + h) c = UNDER
+      else if (v === 1 + h) c = HULL_D
+      else if (v === 3) c = HULL_L
+      else if (v === 5 && u % 3 === 0 && u > 24 && u < 44) c = WIN
+      else if (u % 7 === 0) c = '#868fa0'
+      put(u, v, c)
+    }
+    if (u > 34) put(u, 2, u % 4 === 0 ? SNOW2 : SNOW)
+  }
+  // the navigational deflector, dark and cold
+  for (let v = 4; v <= 8; v++) {
+    put(17, v, v === 4 || v === 8 ? '#6a80a6' : '#26304a')
+    put(18, v, v === 4 || v === 8 ? '#6a80a6' : v === 6 ? '#40507a' : '#2c3754')
+    put(19, v, v === 4 || v === 8 ? HULL_D : '#4a5a7c')
+  }
+
+  // the saucer: a long wedge, thin at the nose, deep under the bridge
+  const top = (u: number) => (u === 0 ? -1 : -Math.round(1.6 + 4.6 * Math.sqrt(Math.min(u, 30) / 30)))
+  const bot = (u: number) => (u === 0 ? 1 : Math.round(1.2 + 2.2 * Math.min(u, 30) / 30))
+  for (let u = 0; u <= 34; u++) {
+    let t = top(u)
+    let b = bot(u)
+    if (u >= 31) (t += [1, 2, 3, 5][u - 31]), (b -= [0, 0, 1, 1][u - 31])
+    const mid = Math.round((t + b) / 2)
+    for (let v = t; v <= b; v++) {
+      let c = HULL
+      if (v === t) c = SNOW
+      else if (v === t + 1) c = (u >= 4 && u <= 10) || (u >= 23 && u <= 28) ? SNOW2 : HULL_L
+      else if (v === t + 2 && u > 6) c = '#a3abb9'
+      else if (v === b) c = UNDER
+      else if (v === b - 1) c = '#a7afbc' // the bright rim of the saucer edge
+      else if (v === mid && u % 2 && u > 2 && u < 31) c = WIN
+      else if (v > mid) c = HULL_D
+      put(u, v, c)
+    }
+    if ((u >= 5 && u <= 9) || (u >= 24 && u <= 27)) put(u, t - 1, SNOW)
+  }
+  // the bridge module, snow on it
+  for (let u = 18; u <= 24; u++) {
+    const t = top(u)
+    const edge = u === 18 || u === 24
+    put(u, t - 1, edge ? HULL_L : SNOW2)
+    if (!edge) put(u, t - 2, SNOW)
+  }
+
+  // shear into the scene, then outline the whole silhouette
+  const ship = new Pix()
+  const at = new Set<string>()
+  for (const [key, c] of flat) {
+    const [u, v] = key.split(',').map(Number)
+    const x = X0 + u
+    const y = Y0 + v - Math.round(u * slope)
+    ship.set(x, y, c)
+    at.add(`${x},${y}`)
+  }
+  const OUT = '#4a5263'
+  for (const key of at) {
+    const [x, y] = key.split(',').map(Number)
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const k = `${x + dx},${y + dy}`
+      if (!at.has(k)) ship.set(x + dx, y + dy, OUT)
+    }
+  }
+  // icicles under the saucer rim
+  ;[[4, 1], [8, 2], [13, 1], [27, 2], [30, 1]].forEach(([u, n]) => {
+    for (let i = 1; i <= n; i++) ship.set(X0 + u, Y0 + bot(u) + 1 + i - Math.round(u * slope), i === n ? '#e9f3fa' : ICE)
+  })
+  return ship
+}
+
+function timeless() {
+  const T = TL_T
+  const W = GW * Q
+  const H = GH * Q
+  let seed = 2374
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
+
+  let s = `<defs>
+    <linearGradient id="tlSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a7b3c6"/><stop offset="0.55" stop-color="#d0d7e2"/><stop offset="0.7" stop-color="#e3e7ee"/></linearGradient>
+    <linearGradient id="tlFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <radialGradient id="tlHoleG" cx="0" cy="1" r="1"><stop offset="0" stop-color="#000" stop-opacity="1"/><stop offset="0.6" stop-color="#000" stop-opacity="0.85"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+    <mask id="tlFade"><rect x="-10" y="-10" width="${W + 20}" height="${H + 20}" fill="url(#tlFadeG)"/></mask>
+    <mask id="tlSnowM"><rect x="-10" y="-10" width="${W + 20}" height="${H + 20}" fill="url(#tlFadeG)"/><rect x="0" y="${30 * Q}" width="${44 * Q}" height="${18 * Q}" fill="url(#tlHoleG)"/></mask>
+    <radialGradient id="tlSun"><stop offset="0" stop-color="#fbf8ef" stop-opacity="0.9"/><stop offset="0.25" stop-color="#f4f1ea" stop-opacity="0.5"/><stop offset="1" stop-color="#eef0f2" stop-opacity="0"/></radialGradient>
+    <radialGradient id="tlCloud"><stop offset="0" stop-color="#eef1f5" stop-opacity="0.55"/><stop offset="1" stop-color="#eef1f5" stop-opacity="0"/></radialGradient>
+    <radialGradient id="tlCloudD"><stop offset="0" stop-color="#97a3b8" stop-opacity="0.35"/><stop offset="1" stop-color="#97a3b8" stop-opacity="0"/></radialGradient>
+    <radialGradient id="tlFrost"><stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/><stop offset="0.4" stop-color="#cfe9ff" stop-opacity="0.5"/><stop offset="1" stop-color="#cfe9ff" stop-opacity="0"/></radialGradient>
+    <linearGradient id="tlGround" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#dfe5ee"/><stop offset="1" stop-color="#f0f3f8"/></linearGradient>
+  </defs>`
+
+  // ======== sky, pale sun, cloud, mountains, the ice plain ========
+  let back = `<rect x="-10" y="-10" width="${W + 20}" height="${H + 20}" fill="url(#tlSky)"/>`
+  back += `<circle cx="${33 * Q}" cy="${9 * Q}" r="34" fill="url(#tlSun)"/>`
+  back += `<circle cx="${33 * Q}" cy="${9 * Q}" r="7" fill="#f6f4ee" opacity="0.7"/>`
+  // slow overcast: soft banks drifting a little and back over the story
+  const clouds: [number, number, number, number, string, number][] = [
+    [20, 5, 60, 9, 'tlCloudD', 10], [70, 3, 70, 10, 'tlCloudD', -8], [50, 13, 80, 8, 'tlCloud', 9], [12, 16, 50, 6, 'tlCloud', -7], [82, 15, 50, 7, 'tlCloud', 6],
+  ]
+  clouds.forEach(([cx, cy, rx, ry, g, dx]) => {
+    back += `<g><ellipse cx="${cx * Q}" cy="${cy * Q}" rx="${rx}" ry="${ry * 2}" fill="url(#${g})"/>${tlMove([[0, 0, 0], [T / 2, dx / Q, 0], [T, 0, 0]], '0.45 0 0.55 1')}</g>`
+  })
+  // far range, then a nearer ice ridge, each with snow on the crests
+  const far = new Pix()
+  const near = new Pix()
+  for (let c = 0; c < GW; c++) {
+    const h1 = 21 + Math.round(2.6 * Math.sin(c / 6.3 + 0.7) + 1.7 * Math.sin(c / 2.6 + 2) + (c > 50 ? -1 : 0))
+    for (let y = h1; y < 32; y++) {
+      const fromTop = y - h1
+      let col = '#c7cfdc'
+      if (fromTop === 0) col = '#eef2f7'
+      else if (fromTop === 1) col = (c * 7) % 3 ? '#dfe5ee' : '#ccd4e0'
+      else if ((c + y) % 7 === 0 && fromTop < 5) col = '#d0d8e4'
+      else if (Math.sin(c / 2.6 + 2) > 0.6 && fromTop < 6) col = '#b9c3d2'
+      far.set(c, y, col)
+    }
+    const h2 = 27 + Math.round(1.4 * Math.sin(c / 4.1 + 1.3) + 0.8 * Math.sin(c / 1.7))
+    for (let y = h2; y < 33; y++) near.set(c, y, y === h2 ? '#f3f6fa' : y === h2 + 1 ? '#d6dde8' : '#cfd7e3')
+  }
+  back += tlPath(far) + `<rect x="0" y="${25 * Q}" width="${W}" height="${8 * Q}" fill="#e3e8ef" opacity="0.35"/>` + tlPath(near)
+  // the ice plain
+  back += `<rect x="-10" y="${32 * Q}" width="${W + 20}" height="${16 * Q + 10}" fill="url(#tlGround)"/>`
+  const plain = new Pix()
+  plain.rect(0, 32, GW, 1, '#eef2f7')
+  for (let i = 0; i < 70; i++) {
+    const x = Math.floor(rnd() * GW)
+    const y = 33 + Math.floor(rnd() * 15)
+    const w = 2 + Math.floor(rnd() * 5)
+    plain.rect(x, y, w, 1, rnd() < 0.5 ? '#f7f9fc' : '#d6dde8')
+  }
+  // a long low drift across the front
+  for (let x = 0; x < GW; x++) {
+    const y = 44 + Math.round(1.2 * Math.sin(x / 9 + 1))
+    plain.set(x, y, '#f9fbfd').set(x, y + 1, '#dde3ec')
+  }
+  // their old footprints, out to the ship and back
+  for (let x = 2; x < 56; x += 3) {
+    plain.set(x, 40 + ((x / 3) % 2), '#c8d1df')
+    if (x > 6) plain.set(x + 1, 42 - ((x / 3) % 2), '#d2dae6')
+  }
+  back += tlPath(plain)
+
+  // ======== Voyager in the ice ========
+  const X0 = 41
+  const Y0 = 34
+  const SL = 0.24
+  const ship = tlShip(X0, Y0, SL)
+  // ice around her: a drift bank burying the nose and the belly, with jagged blue shards
+  const bank = new Pix()
+  const shipM = (ship as any).m as Map<number, Map<number, string>>
+  for (let x = 36; x < GW; x++) {
+    const sy = x < 42 ? 38 - Math.round((x - 36) * 0.8) : x < 49 ? 33 + Math.round((x - 42) * 0.7) : x < 64 ? 38 : 37 + Math.round(0.6 * Math.sin(x / 3.1)) - (x > 78 ? 1 : 0)
+    // ice glazing the hull just above the bank
+    for (let y = sy - 2; y < sy; y++) {
+      const row = shipM.get(y)
+      if (row && row.has(x)) row.set(x, (x + y) % 3 ? '#bcd2e3' : '#d7e7f3')
+    }
+    for (let y = sy; y < 40; y++) {
+      let c = y === sy ? '#fbfcfe' : y === sy + 1 ? '#e9eef5' : '#dce3ed'
+      if (y > sy + 2 && (x * 3 + y) % 11 === 0) c = '#c7d8e8'
+      bank.set(x, y, c)
+    }
+    bank.set(x, 40, '#e4e9f0')
+  }
+  // ice shards jutting up around the hull
+  const shard = (x: number, y: number, h: number, lean: number) => {
+    for (let i = 0; i < h; i++) {
+      const xx = x + Math.round(i * lean)
+      bank.set(xx, y - i, i === h - 1 ? '#eef7fc' : '#b6d0e6').set(xx + 1, y - i, '#8fb2d1')
+      if (i < h - 2) bank.set(xx - 1, y - i, '#d4e6f3')
+    }
+  }
+  shard(39, 36, 4, 0.3)
+  shard(50, 37, 3, -0.3)
+  shard(66, 37, 4, 0.25)
+  shard(76, 37, 3, 0)
+  shard(87, 36, 4, -0.3)
+  s += `<g mask="url(#tlFade)">${back}`
+  s += tlPath(ship) + tlPath(bank)
+  s += `</g>`
+
+  // falling snow: a tile of flakes sliding down one screen height per loop, swaying gently
+  const snowLayer = (n: number, per: number, sway: number, swayPer: number, col: string, op: number, big: boolean) => {
+    const pts: [number, number][] = []
+    for (let i = 0; i < n; i++) pts.push([Math.floor(rnd() * GW), Math.floor(rnd() * GH)])
+    let flakes = ''
+    for (const [x, y] of pts) {
+      for (const yy of [y, y - GH]) {
+        if (big) flakes += `<rect x="${x * Q}" y="${yy * Q}" width="${Q}" height="${Q}" fill="${col}"/>`
+        else flakes += `<rect x="${x * Q + 0.5}" y="${yy * Q + 0.5}" width="1" height="1" fill="${col}"/>`
+      }
+    }
+    const fall = `<animateTransform attributeName="transform" type="translate" values="0 0;0 ${H}" dur="${per}s" repeatCount="indefinite"/>`
+    const sw = `<animateTransform attributeName="transform" type="translate" calcMode="spline" values="0 0;${sway} 0;0 0" keyTimes="0;0.5;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1" dur="${swayPer}s" repeatCount="indefinite"/>`
+    return `<g opacity="${op}"><g>${sw}<g>${flakes}${fall}</g></g></g>`
+  }
+  s += `<g mask="url(#tlSnowM)">${snowLayer(70, tlPer(1), 6, tlPer(3), '#ffffff', 0.85, false)}${snowLayer(36, tlPer(1), -5, tlPer(2), '#f8faff', 0.8, true)}</g>`
+
+  // ======== the beat sheet ========
+  const ky = 26
+  const kx0 = 23
+  const kx1 = 29
+  const cx0 = 1
+  const cx1 = 7
+  const rA = 8.8 // Kim's claw starts to reach
+  const st = 0.15 // one in-between drawing
+  const rB = 11.4 // ... and comes back
+
+  // the touch: frost glints where the claw rests, loose snow slides off
+  const tx = kx1 + 25.5
+  const ty = ky + 4.5
+  s += `<circle cx="${tx * Q}" cy="${ty * Q}" r="9" fill="url(#tlFrost)" opacity="0">${tlFade([[rA + 3 * st + 0.2, 0], [rA + 1.4, 0.8], [rB - 0.6, 0.8], [rB + 0.6, 0]])}</circle>`
+  ;[[-1, 0, 6], [1, 0.35, 7], [2, 0.7, 5]].forEach(([dx, dt, fall], i) => {
+    const t0 = rA + 0.9 + dt
+    s += `<rect x="${(tx + dx) * Q}" y="${(ky + 2) * Q}" width="${Q}" height="${Q}" fill="${i === 1 ? '#ffffff' : '#e9f1f8'}" opacity="0"><animateTransform attributeName="transform" type="translate" calcMode="spline" values="0 0;0 0;${i - 1} ${fall * Q};${i - 1} ${fall * Q}" keyTimes="0;${tlK(t0)};${tlK(t0 + 1.3)};1" keySplines="0 0 1 1;0.5 0 0.9 0.6;0 0 1 1" dur="${T}s" repeatCount="indefinite"/>${tlFade([[t0, 0], [t0 + 0.25, 0.95], [t0 + 1.0, 0.9], [t0 + 1.3, 0]])}</rect>`
+  })
+
+  // Chakotay: white hair, the tattoo over his brow, a heavy brown coat with a fur collar
+  const chakCoat: TlCoat = { hair: '#d9dadd', hairL: '#f2f2f2', collar: '#e2d9c8', collarL: '#f3ede2', coat: '#6c5638', coatD: '#4e3d27', coatL: '#80694a', trim: '#3c2f1f' }
+  s += tlCrab(
+    TL_CHAK, chakCoat, cx0, ky - 1,
+    [[2.8, 6.0], [12.9, 16.2]],
+    [[0, 0, 0], [2.8, 0, 0], [6.0, cx1 - cx0, 0], [12.9, cx1 - cx0, 0], [16.2, 0, 0]],
+    [
+      [0, 1.6, 'R'], [1.6, 1.75, 'X'], [1.75, 6.4, 'R'], [6.4, 9.6, 'U'], [9.6, 10.8, 'R'], [10.8, 10.95, 'X'], [10.95, 12.2, 'R'],
+      [12.2, 12.35, 'H'], [12.35, 14.9, 'L'], [14.9, 15.05, 'X'], [15.05, 16.5, 'L'], [16.5, 16.65, 'H'], [16.65, T, 'R'],
+    ],
+    '', // his near claw is tucked into his coat pocket
+    p => {
+      p.set(cx0 + 14, ky, '#5b3b44').set(cx0 + 15, ky, '#5b3b44').set(cx0 + 16, ky + 1, '#5b3b44')
+      p.rect(cx0 + 13, ky + 7, 3, 1, chakCoat.coatD).set(cx0 + 14, ky + 7, TL_CHAK.shade)
+    },
+    0.9,
+  )
+
+  // Harry Kim: salt-and-pepper hair, a blue parka and a dark red scarf
+  const kimCoat: TlCoat = { hair: '#6f6f78', hairL: '#b9bac2', collar: '#8e2f3a', collarL: '#a8434e', coat: '#3f6987', coatD: '#2b4b63', coatL: '#527e9c', trim: '#24384a' }
+  const reach = [
+    shown(tlPath(new Pix().rect(kx0 + 18, ky + 4, 3, 2, TL_KIM.skin).rect(kx0 + 18, ky + 6, 3, 1, TL_KIM.shade)), [[0, rA], [rB + 3 * st, T]], T),
+    shown(tlReach(TL_KIM, kx0, ky, 1), [[rA, rA + st], [rB + 2 * st, rB + 3 * st]], T),
+    shown(tlReach(TL_KIM, kx0, ky, 2), [[rA + st, rA + 2 * st], [rB + st, rB + 2 * st]], T),
+    shown(tlReach(TL_KIM, kx0, ky, 3), [[rA + 2 * st, rB + st]], T),
+  ].join('')
+  s += tlCrab(
+    TL_KIM, kimCoat, kx0, ky,
+    [[2.6, 6.2], [12.7, 16.3]],
+    [[0, 0, 0], [2.6, 0, 0], [6.2, kx1 - kx0, 0], [12.7, kx1 - kx0, 0], [16.3, 0, 0]],
+    [
+      [0, 1.1, 'R'], [1.1, 1.25, 'X'], [1.25, 6.6, 'R'], [6.6, 8.6, 'U'], [8.6, 9.4, 'R'], [9.4, 10.9, 'X'], [10.9, 12.0, 'R'],
+      [12.0, 12.15, 'H'], [12.15, 16.6, 'L'], [16.6, 16.75, 'H'], [16.75, T, 'R'],
+    ],
+    reach,
+    p => {
+      p.rect(kx0 + 3, ky + 7, 1, 2, kimCoat.collar).set(kx0 + 3, ky + 9, kimCoat.collarL)
+    },
+    2.2,
+  )
+
+  // near snow, in front of everything: a few brighter flakes, a little faster
+  s += `<g mask="url(#tlSnowM)">${snowLayer(22, tlPer(2), 7, tlPer(4), '#ffffff', 0.95, true)}</g>`
+  return s
+}
+
 type Scene = { name: string; w: number; h: number; draw: () => string }
 
 // Scenes reworked to one 17.17 s story that passed the flash check and review; the rest wait
-const APPROVED = new Set(['Darmok', 'All Good Things', 'The Cloud', 'First Contact', 'Caretaker', 'Chain of Command', 'Scorpion', 'Q Who', 'The Doctor', 'The Inner Light', 'Déjà Q', 'Tapestry', 'The Best of Both Worlds', "Yesterday's Enterprise", 'The Measure of a Man', 'Blink of an Eye', 'Year of Hell'])
+const APPROVED = new Set(['Darmok', 'All Good Things', 'The Cloud', 'First Contact', 'Caretaker', 'Chain of Command', 'Scorpion', 'Q Who', 'The Doctor', 'The Inner Light', 'Déjà Q', 'Tapestry', 'The Best of Both Worlds', "Yesterday's Enterprise", 'The Measure of a Man', 'Blink of an Eye', 'Year of Hell', 'Cause and Effect', 'Relics', 'Ode to Spot', 'Endgame', 'Threshold', 'Timeless'])
 
 const SCENES_ALL: Scene[] = [
   { name: 'Darmok', w: GW * Q, h: GH * Q, draw: darmok },
@@ -6881,6 +9842,12 @@ const SCENES_ALL: Scene[] = [
   { name: 'The Measure of a Man', w: GW * Q, h: GH * Q, draw: measureOfAMan },
   { name: 'Blink of an Eye', w: GW * Q, h: GH * Q, draw: blinkOfAnEye },
   { name: 'Year of Hell', w: GW * Q, h: GH * Q, draw: yearOfHell },
+  { name: 'Cause and Effect', w: GW * Q, h: GH * Q, draw: causeAndEffect },
+  { name: 'Relics', w: GW * Q, h: GH * Q, draw: relics },
+  { name: 'Ode to Spot', w: GW * Q, h: GH * Q, draw: dataAndSpot },
+  { name: 'Endgame', w: GW * Q, h: GH * Q, draw: endgame },
+  { name: 'Threshold', w: GW * Q, h: GH * Q, draw: threshold },
+  { name: 'Timeless', w: GW * Q, h: GH * Q, draw: timeless },
 ]
 const SCENES: Scene[] = SCENES_ALL.filter(one => APPROVED.has(one.name))
 const SCENE_NAMES = SCENES.map(one => one.name)

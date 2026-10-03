@@ -4911,7 +4911,7 @@ function ringColor(l: Limit, now: number) {
   return (l.percentUsed * w) / elapsed >= 100 ? C.warn : C.ring
 }
 
-function ringSvg(limit: Limit, icon: 'clock' | 'cal', color: string) {
+function ringSvg(limit: Limit, icon: 'clock' | 'cal' | 'book', color: string) {
   const c = RING / 2
   const R = c - 2.5
   const circ = 2 * Math.PI * R
@@ -4920,7 +4920,9 @@ function ringSvg(limit: Limit, icon: 'clock' | 'cal', color: string) {
   s += `<circle cx="${c}" cy="${c}" r="${R}" fill="#241a36" stroke="${C.track}" stroke-width="2.5"/>`
   s += `<circle cx="${c}" cy="${c}" r="${R}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="${(circ * pct) / 100} ${circ}" transform="rotate(-90 ${c} ${c})"/>`
   s +=
-    icon === 'clock'
+    icon === 'book'
+      ? `<path d="M${c} ${c - 3.5}q-3.5 -2 -7 -0.5v9q3.5 -1.5 7 0.5zM${c} ${c - 3.5}q3.5 -2 7 -0.5v9q-3.5 -1.5 -7 0.5z" fill="none" stroke="${C.dim}" stroke-width="1.4" stroke-linejoin="round"/>`
+      : icon === 'clock'
       ? `<circle cx="${c}" cy="${c}" r="6" fill="none" stroke="${C.dim}" stroke-width="1.6"/><path d="M${c} ${c - 3.5}V${c}l2.5 1.8" stroke="${C.dim}" stroke-width="1.6" fill="none" stroke-linecap="round"/>`
       : `<rect x="${c - 6}" y="${c - 5}" width="12" height="11" rx="1.5" fill="none" stroke="${C.dim}" stroke-width="1.6"/><path d="M${c - 6} ${c - 1.5}h12M${c - 3} ${c - 7}v3.5M${c + 3} ${c - 7}v3.5" stroke="${C.dim}" stroke-width="1.6"/>`
   return s + '</svg>'
@@ -5159,7 +5161,7 @@ export const register: Register = on => {
           {shown.map(l => (
             <Box key={`ring-${l.kind}`} flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0} position="relative">
               <Svg
-                source={ringSvg(l, l.kind === 'five_hour' ? 'clock' : 'cal', ringColor(l, now))}
+                source={ringSvg(l, l.kind === 'five_hour' ? 'clock' : l.kind === 'seven_day' ? 'cal' : 'book', ringColor(l, now))}
                 alt={`${label(l.kind)} ${Math.round(l.percentUsed)}%`}
                 width={RING}
                 height={RING}

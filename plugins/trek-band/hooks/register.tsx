@@ -31,7 +31,7 @@ const C = {
 // One play of a scene's story; every scene is timed to exactly this
 const SCENE_SECONDS = 17.17
 // How many times a scene plays before the next one
-const ROUNDS = 2
+const ROUNDS = 1
 
 // Discrete on/off over a loop: visible inside each [start, end) window (seconds)
 function windows(on: [number, number][], dur: number) {
@@ -7312,8 +7312,7 @@ export const register: Register = on => {
       )
     }
 
-    const { Box, Text, Svg, Button } = $.ui.resolve(e)
-    const paused = await read($, isPaused)
+    const { Box, Text, Svg } = $.ui.resolve(e)
     const name = SCENE_NAMES[idx % SCENE_NAMES.length]
     return (
       <Box
@@ -7345,28 +7344,6 @@ export const register: Register = on => {
           ))}
         </Box>
         <Box flexDirection="row" alignItems="center" flexShrink={0}>
-          <Box flexDirection="column" alignItems="center" flexShrink={0} marginRight={1}>
-            <Button
-              key="trek-pause"
-              label={paused ? '▶' : '⏸'}
-              plain
-              dimColor
-              onPress={async () => {
-                await update($, isPaused, v => !v)
-                if (!(await read($, isPaused))) rotateAfter($)
-              }}
-            />
-            <Button
-              key="trek-next"
-              label="⏭"
-              plain
-              dimColor
-              onPress={async () => {
-                await update($, scene, v => nextScene(v))
-                rotateAfter($)
-              }}
-            />
-          </Box>
           <Box key={`scene-${idx}`} flexShrink={0}>
             <Svg source={sceneAt(idx, shownAt ? (now - shownAt) / 1000 : 0)} alt={name} width={SCENE_W} height={SCENE_H} />
           </Box>

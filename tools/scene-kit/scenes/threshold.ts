@@ -251,14 +251,18 @@ function thCrab(k: CrabHD, x: number, y: number, look: Side, who: 'paris' | 'jan
   return s
 }
 
-// a baby salamander, 9 x 3, facing right
+// a baby salamander, 16 x 6, facing right: a little copy of its parents
 const TH_BABY = [
-  '.......d.L.',
-  'L....LLEoEL',
-  '.oLLoosoooo',
-  '..dooooood.',
-  '...t.t..t.t',
+  '..........LL.LL.',
+  'L.......LLEELEEL',
+  'oL...LLoosEEoEEo',
+  '.ooyoooosooooDDo',
+  '...ddddddddddd..',
+  '....t.t....t.t..',
 ]
+const TH_BABY_PAL: Record<string, string> = {
+  L: '#ffb48c', o: '#ee8a5e', E: '#1a1020', d: '#c0603f', D: '#8f4a34', s: '#6a3022', y: '#f6cf72', t: '#d87050',
+}
 
 // The finished salamander, facing right: eye bumps on a broad head, a smile, a red
 // collar with the combadge, the black of the uniform under the belly, spots, splayed
@@ -306,16 +310,20 @@ function threshold() {
 
   // ---- the story, in seconds ----
   const WARP0 = 2.6 // Paris opens her up: the stars begin to stretch
-  const ECHO0 = 3.6 // the shuttle smears into echoes of itself
-  const ECHO1 = 5.0
-  const D1a = 5.4 // cross-dissolve to the swamp world
-  const D1b = 7.3
-  const M0 = 9.4 // the turn begins (Paris; Janeway a beat later)
-  const MSTEP = 1.1 // one drawing every 1.1 s
+  const ECHO0 = 3.3 // the shuttle smears into echoes of itself
+  const ECHO1 = 4.5
+  const D1a = 4.6 // cross-dissolve to the swamp world (the backdrop only)
+  const D1b = 6.4
+  const CH1a = 5.9 // the two of them fade in once the swamp is ~80% in
+  const CH1b = 6.6
+  const M0 = 9.3 // the turn begins (Paris; Janeway a beat later)
+  const MSTEP = 1.05 // one drawing every 1.05 s
   const MFADE = 0.35
-  const BABY = 12.9 // the babies wriggle up out of the water
-  const HEART = 13.8
-  const D2a = 15.1 // back to the calm space of the opening
+  const BABY = 12.6 // the babies wriggle up out of the water
+  const HEART = 13.4
+  const CH2a = 14.8 // everyone fades out first...
+  const CH2b = 15.4
+  const D2a = 15.4 // ...then the swamp dissolves back into the calm space of the opening
   const RESET = 11.0 // everything in space slips back to its start while the swamp covers it
 
   let s = `<defs>
@@ -528,7 +536,8 @@ function threshold() {
     sw += `<g opacity="0"><circle cx="${x * Q + 1}" cy="${y * Q + 1}" r="4" fill="url(#thFly)"/><rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#e8ff9a"/><animateMotion path="M0 0 q ${i % 2 ? 8 : -8} -6 ${i % 2 ? 2 : -3} -10 t ${i % 2 ? -6 : 6} 4 z" dur="${d}s" begin="${(-i * 0.7).toFixed(2)}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.15;0.9;0.15" calcMode="spline" keyTimes="0;0.5;1" keySplines="${TH_EASE};${TH_EASE}" dur="${d}s" begin="${(-i * 0.7).toFixed(2)}s" repeatCount="indefinite"/></g>`
   }
 
-  // ---- the two of them ----
+  // ---- the two of them (and the babies and the heart): their own layer over the backdrop ----
+  let ch = ''
   const G = 37
   const PX = 36
   const JX = 66
@@ -563,31 +572,34 @@ function threshold() {
       }
       g += `<g opacity="${m === 0 ? 1 : 0}">${art}${thOp(keys)}</g>`
     }
-    sw += g
+    ch += g
   }
   // babies wriggle up out of the water and settle in front of their parents
   {
     const baby = (flip: boolean) => {
       const rows = flip ? TH_BABY.map(r => [...r].reverse().join('')) : TH_BABY
-      return thPath(new Pix().rows(rows, 0, 0, { L: '#eb9575', o: '#d97757', E: '#1a1020', d: '#b85f43' }))
+      return thPath(new Pix().rows(rows, 0, 0, TH_BABY_PAL))
     }
     const bs: [number, number, boolean, number, number][] = [
-      [36, 39, false, 0, 3], [54, 40, true, 0.5, 4], [70, 39, true, 0.9, 5],
+      [35, 37, false, 0, 3], [55, 37, true, 0.5, 4], [73, 37, true, 0.9, 5],
     ]
-    bs.forEach(([x, y, flip, lag, n]) => {
+    bs.forEach(([x, y, flip, lag, n], i) => {
       const t0 = BABY + lag
-      sw += `<g opacity="0"><g transform="translate(${x * Q} ${y * Q})"><g>${thMove([[t0, 0, 3], [t0 + 1.0, 0, 0], [t0 + 2.0, flip ? -2 : 2, 0]])}<g>${thSway(flip ? -1 : 1, 0, n * 2)}${baby(flip)}</g></g></g>${thOp([[t0, 0], [t0 + 0.6, 1]])}</g>`
+      const drift = [1, -1, -1][i]
+      ch += `<g opacity="0"><g transform="translate(${x * Q} ${y * Q})"><g>${thMove([[t0, 0, 3], [t0 + 1.0, 0, 0], [t0 + 2.0, drift, 0]])}<g>${thSway(flip ? -1 : 1, 0, n * 2)}${baby(flip)}</g></g></g>${thOp([[t0, 0], [t0 + 0.6, 1]])}</g>`
     })
     // the water they came up through, drawn over their feet
-    sw += thPath(new Pix().rect(40, 43, 40, 1, '#22302c').rect(40, 44, 40, 1, '#1c2a28'))
+    ch += thPath(new Pix().rect(34, 43, 56, 1, '#22302c').rect(34, 44, 56, 1, '#1c2a28'))
   }
   // a small heart rising between the two heads
   {
     const h = new Pix().rows(['.pp.pp.', 'pPPpppp', 'ppppppp', '.ppppp.', '..ppp..', '...p...'], 54, 22, { p: '#ff7fa8', P: '#ffc4d8' })
-    sw += `<g opacity="0"><g>${thPath(h)}${thMove([[HEART, 0, 2], [D2a + 0.6, 0, -6]], '0.3 0 0.6 1')}</g>${thOp([[HEART, 0], [HEART + 0.7, 1], [D2a, 1], [D2a + 0.8, 0]])}</g>`
+    ch += `<g opacity="0"><g>${thPath(h)}${thMove([[HEART, 0, 2], [CH2b, 0, -5]], '0.3 0 0.6 1')}</g>${thOp([[HEART, 0], [HEART + 0.7, 1]])}</g>`
   }
 
-  // ---- composite: space underneath, the swamp dissolving in and out on top ----
+  // ---- composite: space underneath, the swamp backdrop dissolving in and out on top, and the
+  // characters on their own fade: in only once the swamp is nearly all there, out before it goes ----
+  sw += `<g opacity="0">${ch}${thOp([[CH1a, 0], [CH1b, 1], [CH2a, 1], [CH2b, 0]])}</g>`
   const swamp = `<g opacity="0">${sw}${thOp([[D1a, 0], [D1b, 1], [D2a, 1], [thT, 0]])}</g>`
   s += `<g mask="url(#thFade)">${space}${swamp}</g>`
   return s

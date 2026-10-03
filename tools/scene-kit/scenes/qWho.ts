@@ -1,7 +1,7 @@
 // ---------- Q Who: "Welcome to the Borg" ----------
 // The Enterprise cruises. Q turns, smug, raises a claw and snaps: a Borg cube
 // slowly looms out of the dark, the sky goes sickly green, and a tractor beam
-// drags the little ship in. Q glances back, pleased, hops; snaps again; it all goes away.
+// drags the little ship in. Q glances back, pleased, hops; snaps again: the cube fades and the ship drifts home.
 
 const QW_Q: CrabHD = {
   skin: '#d97757',
@@ -209,9 +209,9 @@ function qWho() {
   const hold: [number, number] = [-4, -1]
   const pulled: [number, number] = [6, 4]
   const shipKeys: [number, number, number, string?][] = [
-    [0, 36, -6], [beamOut[0], ...hold], [drag[0], ...hold], [drag[1], ...pulled], [beamBack[1] + 0.3, ...pulled],
-    // released: it flies on off the left edge, then glides back in from the right to its opening spot
-    [15.7, -112, 0, '0.5 0 0.85 0.6'], [15.71, 126, -6, '0 0 1 1'], [T, 36, -6, '0.2 0.55 0.45 1'],
+    [0, 36, -6], [beamOut[0], ...hold], [drag[0], ...hold], [drag[1], ...pulled], [beamBack[1], ...pulled],
+    // released by the second snap: it drifts slowly back to its opening spot as the cube fades
+    [T, 36, -6],
   ]
 
   // tractor beam: narrow at the cube's emitter, spreading over the ship; it reaches out
@@ -272,10 +272,11 @@ function qWho() {
   const cx = qx + 18
   const cy = qy - 8
   const UP = '0.25 0.6 0.4 1'
-  const arm: [number, number, number, string?][] = [[3.7, 0, 12 * Q], [4.15, 0, 0, UP], [6.0, 0, 0], [6.4, 0, 12 * Q], [12.4, 0, 12 * Q], [12.8, 0, 0, UP], [14.25, 0, 0], [14.65, 0, 12 * Q]]
+  const armDown: [number, number] = [13.8, 15.2] // after the second snap the claw sinks slowly
+  const arm: [number, number, number, string?][] = [[3.7, 0, 12 * Q], [4.15, 0, 0, UP], [6.0, 0, 0], [6.4, 0, 12 * Q], [12.4, 0, 12 * Q], [12.8, 0, 0, UP], [armDown[0], 0, 0], [armDown[1], 0, 12 * Q, '0.3 0 0.7 1']]
   const half = new Pix().rect(cx + 1, cy + 1, 2, 1, k.skin)
   const closed = new Pix().rect(cx + 1, cy, 2, 1, k.light)
-  qs += `<clipPath id="qwArmClip"><rect x="${(qx + 17) * Q}" y="${(qy - 9) * Q}" width="${7 * Q}" height="${13 * Q}"/></clipPath><g clip-path="url(#qwArmClip)"><g transform="translate(0 ${12 * Q})">${armUpHD(k, qx, qy, 'right')}${shown(half.svg(), [[snap1 - 0.09, 6.4], [snap2 - 0.09, 14.65]], T)}${shown(closed.svg(), [[snap1, 6.4], [snap2, 14.65]], T)}${qwMove(arm)}</g></g>`
+  qs += `<clipPath id="qwArmClip"><rect x="${(qx + 17) * Q}" y="${(qy - 9) * Q}" width="${7 * Q}" height="${13 * Q}"/></clipPath><g clip-path="url(#qwArmClip)"><g transform="translate(0 ${12 * Q})">${armUpHD(k, qx, qy, 'right')}${shown(half.svg(), [[snap1 - 0.09, 6.4], [snap2 - 0.09, armDown[1]]], T)}${shown(closed.svg(), [[snap1, 6.4], [snap2, armDown[1]]], T)}${qwMove(arm)}</g></g>`
   // green rim light from the cube on his right side, coming and going with it
   const rim = new Pix().rect(qx + 17, qy + 1, 1, 5, '#8fe0a0').rect(qx + 18, qy + 4, 3, 1, '#8fe0a0')
   qs += `<g opacity="0">${rim.svg()}${qwFade([[cubeIn[0], 0], [cubeIn[1], 0.8], [cubeOut[0], 0.8], [cubeOut[1], 0]])}</g>`

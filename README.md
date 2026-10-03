@@ -13,7 +13,7 @@ A [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview): a li
 ## What you get
 
 - **Usage at a glance.** Two rings for the 5-hour and the weekly limit, each with how long until it resets: `4:39` (hours:minutes), `1:18:03` (days:hours:minutes). The rings turn amber at 75% and red at 90%.
-- **A prompt-cache timer** under the prompt. Claude Code's prompt cache lasts an hour from the last message. The timer counts down in green while the cache is warm; once it expires it turns red and counts up, so you know a cache miss is coming. It hides in sessions that have been idle for more than six hours.
+- **A prompt-cache timer** under the usage figures. Claude Code's prompt cache lasts an hour from the last message, yours or Claude's. The timer counts down in green while the cache is warm; once it expires it turns red and counts up, so you know a cache miss is coming. It hides in sessions that have been idle for more than six hours.
 - **Thirteen scenes**, each a 17-second story that plays twice before the next one:
 
 | The Next Generation | | Voyager |
@@ -54,9 +54,9 @@ The scenes draw in the **Code tab of the Claude desktop app**. In a terminal the
 
 ## How it works
 
-trek-band is a mod: JavaScript hooks that run inside Claude Code. It draws the `AbovePrompt` band (rings, countdowns and the scene, an SVG with SMIL animation) and the `PromptHint` line under the prompt (the cache timer).
+trek-band is a mod: JavaScript hooks that run inside Claude Code. It draws the `AbovePrompt` band: the rings, the countdowns, the cache timer and the scene, each an SVG.
 
-One detail matters: redrawing the band restarts the scene's animation. So the band only redraws when something actually changes (a new scene, new usage figures), and the cache timer ticks in its own line, through state that only that line reads.
+One detail shapes the design: redrawing the band restarts the scene's animation. So the band only redraws when something changes (a new scene, new usage figures), and the cache timer is itself an animation: pixel digits that count on their own (SMIL), resynced whenever the band redraws.
 
 Like any mod, it runs with your permissions. Read [`plugins/trek-band/hooks/register.tsx`](plugins/trek-band/hooks/register.tsx), or run `claude plugin validate plugins/trek-band` to list every event it hooks and every call it makes. It reads usage figures, keeps a timer, and draws. It makes no network requests and touches no files.
 

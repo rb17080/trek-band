@@ -6,8 +6,6 @@ import type { Limit } from '../types'
 const limits = atom({ plugin: 'trek-band', key: 'limits' } as const, [])
 const scene = atom({ plugin: 'trek-band', key: 'scene' } as const, 0)
 const isPaused = atom({ plugin: 'trek-band', key: 'isPaused' } as const, false)
-// Bumped every second; only the cache timer under the prompt reads it, so only that redraws
-const tick = atom({ plugin: 'trek-band', key: 'tick' } as const, 0)
 
 // Lilac palette
 const C = {
@@ -4839,7 +4837,7 @@ function nextSundayEvening(now: number) {
   return d.getTime()
 }
 
-// When the window resets, in epoch ms; countdown.tsx ticks toward it on its own
+// When the window resets, in epoch ms
 const resetAt = (l: Limit, now: number) =>
   l.resetsAt ? Date.parse(l.resetsAt) : l.kind === 'seven_day' ? nextSundayEvening(now) : 0
 
@@ -4883,92 +4881,6 @@ function ringSvg(limit: Limit, icon: 'clock' | 'cal') {
 
 const toLimit = (l: Limit): Limit => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })
 
-// The prompt cache lives an hour from the last message, yours or Claude's
-const CACHE_MS = 60 * 60 * 1000
-// Past this, the session is simply cold: no timer
-const STALE_MS = 6 * 60 * 60 * 1000
-let lastMessageAt = 0
-
-// The cache timer, drawn as pixel digits that count by themselves (SMIL), so the band never
-// redraws to tick it: green "59:45" counting down from the last message, then red, counting
-// up ("00:12", then "1:02:03"), hidden once the session has been idle STALE_MS.
-const DIGITS = [
-  '111101101101111', '010110010010111', '111001111100111', '111001111001111', '101101111001001',
-  '111100111001111', '111100111101111', '111001010010010', '111101111101111', '111101111001111',
-]
-const TP = 2.2 // one pixel of a digit, in CSS px
-const ADV = 4 * TP // digit advance
-
-function glyph(d: number, x: number, color: string) {
-  let out = ''
-  for (let i = 0; i < 15; i++) {
-    if (DIGITS[d][i] === '1') out += `<rect x="${(x + (i % 3) * TP).toFixed(2)}" y="${(Math.floor(i / 3) * TP).toFixed(2)}" width="${TP}" height="${TP}"/>`
-  }
-  return `<g fill="${color}">${out}</g>`
-}
-
-const colon = (x: number, color: string) =>
-  `<g fill="${color}"><rect x="${x}" y="${TP}" width="${TP}" height="${TP}"/><rect x="${x}" y="${3 * TP}" width="${TP}" height="${TP}"/></g>`
-
-// One digit position: shows floor(v / unit) mod n, where v runs down (countdown) or up from
-// v0 as time passes; `begin` is when the position's clock starts (seconds, may be negative)
-function digitPosition(x: number, color: string, unit: number, n: number, v0: number, down: boolean) {
-  const period = unit * n
-  let out = ''
-  for (let d = 0; d < n; d++) {
-    // on the position's own timeline tau (0..period), when is digit d showing?
-    const from = down ? period - (d + 1) * unit : d * unit
-    const to = from + unit
-    const kt = [0, from / period, to / period].map(k => +k.toFixed(6))
-    const values = from === 0 ? '1;0' : '0;1;0'
-    const keyTimes = from === 0 ? `0;${kt[2]}` : `0;${kt[1]};${kt[2]}`
-    // phase: where tau is right now
-    const tau = down ? ((((period - (v0 % period)) % period) + period) % period) : ((v0 % period) + period) % period
-    out += `<g opacity="0">${glyph(d, x, color)}<animate attributeName="opacity" calcMode="discrete" values="${values}" keyTimes="${keyTimes}" dur="${period}s" begin="${(-tau).toFixed(3)}s" repeatCount="indefinite"/></g>`
-  }
-  return out
-}
-
-function timerSvg(now: number) {
-  if (lastMessageAt === 0) return null
-  const since = (now - lastMessageAt) / 1000
-  if (since >= STALE_MS / 1000) return null
-  // seconds of warm cache left (negative once cold), set half a second off the whole second
-  // so no digit ever switches on the exact instant it is drawn
-  const left = Math.floor(CACHE_MS / 1000 - since) + 0.5
-  const green = '#5fd38a'
-  const red = '#ff6b81'
-  const w = 7 * ADV
-  let s = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${5 * TP}" viewBox="0 0 ${w} ${5 * TP}" shape-rendering="crispEdges">`
-  if (left > 0) {
-    // mm:ss, counting down
-    s += `<g>${digitPosition(0, green, 600, 6, left, true)}${digitPosition(ADV, green, 60, 10, left, true)}${colon(2 * ADV, green)}${digitPosition(2 * ADV + 2 * TP, green, 10, 6, left, true)}${digitPosition(3 * ADV + 2 * TP, green, 1, 10, left, true)}<set attributeName="visibility" to="hidden" begin="${left.toFixed(3)}s"/></g>`
-  }
-  // counting up once cold: mm:ss for the first hour, then h:mm:ss
-  const start = Math.max(0, left)
-  // seconds cold right now, half a second off the whole second like the countdown
-  const v = left > 0 ? 0.5 : Math.floor(since - CACHE_MS / 1000) + 0.5
-  const inner = (x0: number) =>
-    `${digitPosition(x0, red, 600, 6, v, false)}${digitPosition(x0 + ADV, red, 60, 10, v, false)}${colon(x0 + 2 * ADV, red)}${digitPosition(x0 + 2 * ADV + 2 * TP, red, 10, 6, v, false)}${digitPosition(x0 + 3 * ADV + 2 * TP, red, 1, 10, v, false)}`
-  const hourAt = start + Math.max(0, 3600 - v)
-  const hideAt = start + Math.max(0, (STALE_MS - CACHE_MS) / 1000 - v)
-  const delay = (sec: number) => `${sec.toFixed(3)}s`
-  // while warm, the cold digits must wait for the countdown to end: shift their clocks
-  const shift = (svg: string) => (start > 0 ? svg.replace(/begin="(-?[0-9.]+)s"/g, (_m, b) => `begin="${(Number(b) + start).toFixed(3)}s"`) : svg)
-  s += `<g visibility="${start > 0 ? 'hidden' : 'visible'}">${shift(inner(0))}${start > 0 ? `<set attributeName="visibility" to="visible" begin="${delay(start)}"/>` : ''}<set attributeName="visibility" to="hidden" begin="${delay(hourAt)}"/></g>`
-  s += `<g visibility="hidden">${shift(digitPosition(0, red, 3600, 6, v, false))}${colon(ADV, red)}${shift(inner(ADV + 2 * TP))}<set attributeName="visibility" to="visible" begin="${delay(hourAt)}"/><set attributeName="visibility" to="hidden" begin="${delay(hideAt)}"/></g>`
-  return s + '</svg>'
-}
-
-async function markMessage($: Host) {
-  const now = await $.clock.now()
-  // redraw the band (and so restart the scene) only when the timer appears or turns warm again;
-  // otherwise the countdown resyncs at the next scene change
-  const wasWarm = lastMessageAt !== 0 && now - lastMessageAt < CACHE_MS
-  lastMessageAt = now
-  if (!wasWarm) await update($, tick, n => n + 1)
-}
-
 // The next scene comes ROUNDS plays after the current one started, however it started
 let shownAt = 0
 let rotation: { cancel: () => void } | undefined
@@ -5003,13 +4915,6 @@ export const register: Register = on => {
 
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('rateLimits')) await update($, limits, () => e.rateLimits.map(toLimit))
-    // a response just landed: the cache was used (and its hour restarted) now
-    if (e.changed.includes('context')) await markMessage($)
-    return next(e)
-  })
-
-  on('prompt.submit', async ($, e, next) => {
-    await markMessage($)
     return next(e)
   })
 
@@ -5030,9 +4935,7 @@ export const register: Register = on => {
     if (e.props.hasSurvey) return next(e)
     const list = await read($, limits)
     const idx = await read($, scene)
-    await read($, tick)
     const now = await $.clock.now()
-    const timer = timerSvg(now)
     const shown = [
       list.find(l => l.kind === 'five_hour'),
       list.find(l => l.kind === 'seven_day'),
@@ -5083,11 +4986,6 @@ export const register: Register = on => {
             </Box>
           ))}
         </Box>
-        {timer && (
-          <Box paddingLeft={1} marginTop={1}>
-            <Svg source={timer} alt="Prompt cache timer" width={7 * ADV} height={5 * TP} />
-          </Box>
-        )}
         </Box>
         <Box flexShrink={0} position="relative">
           <Svg source={sceneSvg(idx)} alt={name} width={SCENE_W} height={SCENE_H} />

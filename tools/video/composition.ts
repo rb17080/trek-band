@@ -100,17 +100,21 @@ function segProduct() {
   s += body(228, 579, 'Type / for commands', 20, '#7d7787')
   s += body(204, 640, '+   Auto', 18, '#8d8797')
   s += body(560, 640, '? for shortcuts', 18, '#7d7787')
+  // the status-line cache timer, counting down from 59:41
+  let clockDigits = ''
+  for (let k = 0; k <= 12; k++) {
+    const secs = 3581 - k
+    const label = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
+    clockDigits += `<g opacity="0">${track('opacity', [[5.8 + k - 0.001, 0], [5.8 + k, 1], [5.8 + k + 0.999, 1], [5.8 + k + 1, 0]])}${body(1010, 640, label, 18, '#5fd38a', 'end')}</g>`
+  }
+  s += clockDigits
   s += body(1076, 640, 'Opus', 18, '#cfc8da', 'end')
   // the band rises from behind the prompt
   s += `<g opacity="0">${fadeIn(4.5, 5.2, 99, 100)}<g>${track('transform', [[4.5, '0 44'], [5.4, '0 0']], 'translate')}`
   s += `<rect x="200" y="416" width="880" height="112" rx="16" fill="#2a1f3d"/>`
-  s += ring(250, 460, 22, 37, 'clock', 5.4, 6.6) + display(288, 470, '37%', 30, TEXT, 1) + body(362, 469, '4:39', 22, DIM)
-  s += ring(476, 460, 22, 53, 'cal', 5.6, 6.8) + display(514, 470, '53%', 30, TEXT, 1) + body(588, 469, '1:18:03', 22, DIM)
-  // the real cache timer: 19 seconds after the last message, counting down on its own
-  lastMessageAt = Date.now() - 19_000
-  const timerInner = timerSvg(Date.now())!.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '')
-  const timer = `<g transform="translate(232 494) scale(1.5)" shape-rendering="crispEdges">${timerInner}</g>`
-  s += `<g opacity="0">${fadeIn(5.8, 6.4, 99, 100)}${timer}</g>`
+  s += ring(250, 472, 22, 37, 'clock', 5.4, 6.6) + display(288, 482, '37%', 30, TEXT, 1) + body(362, 481, '4:39', 22, DIM)
+  s += ring(476, 472, 22, 53, 'cal', 5.6, 6.8) + display(514, 482, '53%', 30, TEXT, 1) + body(588, 481, '1:18:03', 22, DIM)
+
   s += `<g>${sceneAt(0, 872, 418, 1.15)}</g>`
   s += `</g></g>`
   s += `</g></g></g>`
@@ -152,7 +156,7 @@ function segFeatures() {
   const rows: [string, string][] = [
     ['LIVE 5-HOUR + WEEKLY LIMITS', 'rings turn amber at 75%, red at 90%'],
     ['13 STORIES, 17 SECONDS EACH', 'each plays twice, then the next scene'],
-    ['PROMPT CACHE TIMER', 'counts down the cache hour in green, then up in red'],
+    ['PROMPT CACHE TIMER', 'in the status line: green countdown, then red once cold'],
     ['FLASH-CHECKED', 'every frame measured: no strobing, no white-outs'],
   ]
   let s = `<g opacity="0">${fadeIn(26.8, 27.5, 30.6, 31.2)}`

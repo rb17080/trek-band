@@ -6,6 +6,11 @@ import type { Limit } from '../types'
 const limits = atom({ plugin: 'trek-band', key: 'limits' } as const, [])
 const scene = atom({ plugin: 'trek-band', key: 'scene' } as const, 0)
 const isPaused = atom({ plugin: 'trek-band', key: 'isPaused' } as const, false)
+// Bumped every second; only the coloured cache timer in the footer reads it, so only that redraws
+const tick = atom({ plugin: 'trek-band', key: 'tick' } as const, 0)
+// When the last message (yours or Claude's) landed; kept in session state so a reload of the
+// mod doesn't wipe it and hide the cache timer until the next message
+const lastMessage = atom({ plugin: 'trek-band', key: 'lastMessage' } as const, 0)
 
 // Lilac palette
 const C = {
@@ -4804,8 +4809,24 @@ const SCENE_NAMES = SCENES.map(one => one.name)
 const SCENE_W = GW * Q
 const SCENE_H = GH * Q
 
-// Each scene is drawn once and reused: the band redraws every second for the countdowns
+// Each scene is drawn once and reused
 const drawn = new Map<number, string>()
+
+// The desktop app rebuilds every mod element whenever anything a mod draws changes (the cache
+// timer ticks every second), and a rebuilt scene image starts its animation from zero. So each
+// rebuild hands over the scene already advanced to where it was: every animation's start time
+// is shifted back by the seconds the scene has been showing.
+function sceneAt(index: number, elapsedSec: number) {
+  const svg = sceneSvg(index)
+  if (!(elapsedSec > 0)) return svg
+  const e = elapsedSec
+  return svg.replace(/<(animate|animateTransform|animateMotion|set)\b([^>]*?)(\/?)>/g, (whole, tag, attrs, close) => {
+    const m = /\sbegin="(-?[0-9.]+)s"/.exec(attrs)
+    if (m) return `<${tag}${attrs.replace(m[0], ` begin="${(Number(m[1]) - e).toFixed(3)}s"`)}${close}>`
+    if (/\sbegin="/.test(attrs)) return whole
+    return `<${tag}${attrs} begin="${(-e).toFixed(3)}s"${close}>`
+  })
+}
 
 function sceneSvg(index: number) {
   const i = index % SCENES.length
@@ -4845,7 +4866,8 @@ const resetAt = (l: Limit, now: number) =>
 // digits of different widths never push what follows
 const countdownCells = (l: Limit) => (l.kind === 'seven_day' ? 7 : 5)
 
-// Marathon style: "4:39" (hours:minutes), or "1:18:03" (days:hours:minutes) past a day
+// Marathon style: "4:39" (hours:minutes), or "1:18:03" (days:hours:minutes) past a day.
+// No seconds: ticking them would redraw the band every second, and that breaks the scene
 function countdown(l: Limit, now: number) {
   const at = resetAt(l, now)
   if (!(at > now)) return '0:00'
@@ -4881,6 +4903,49 @@ function ringSvg(limit: Limit, icon: 'clock' | 'cal') {
 
 const toLimit = (l: Limit): Limit => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })
 
+// The prompt cache lives an hour from the last message, yours or Claude's
+const CACHE_MS = 60 * 60 * 1000
+// Past this, the session is simply cold: no timer
+const STALE_MS = 6 * 60 * 60 * 1000
+let lastMessageAt = 0
+
+
+// The app draws this label in its own proportional font and lets the label's width follow its
+// text, so a "1" turning into a "0" would shift it. Mathematical sans-serif digits (U+1D7E2..)
+// look like ordinary digits but are all the same width.
+const evenDigits = (t: string) => t.replace(/[0-9]/g, d => String.fromCodePoint(0x1d7e2 + Number(d)))
+
+// "0:59": the timer ticks once a minute, because every update makes the desktop app rebuild the
+// band, scene included
+const hoursMinutes = (mins: number) => `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`
+
+function clockText(secs: number) {
+  const h = Math.floor(secs / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  const ss = String(secs % 60).padStart(2, '0')
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
+}
+
+// Counting down to the cache's expiry while warm; counting up once cold; null once stale
+function cacheTimer(now: number): { text: string; isWarm: boolean } | null {
+  if (lastMessageAt === 0) return null
+  const since = now - lastMessageAt
+  if (since >= STALE_MS) return null
+  return since < CACHE_MS
+    ? { text: hoursMinutes(Math.ceil((CACHE_MS - since) / 60000)), isWarm: true }
+    : { text: hoursMinutes(Math.floor((since - CACHE_MS) / 60000)), isWarm: false }
+}
+
+// Every second: a tick that redraws the coloured cache timer (only that hook reads it)
+async function markMessage($: Host) {
+  lastMessageAt = await $.clock.now()
+  await update($, lastMessage, () => lastMessageAt)
+}
+
+async function tickCacheStatus($: Host) {
+  await update($, tick, n => n + 1)
+}
+
 // The next scene comes ROUNDS plays after the current one started, however it started
 let shownAt = 0
 let rotation: { cancel: () => void } | undefined
@@ -4904,17 +4969,40 @@ export const register: Register = on => {
     await $.command.register({ name: 'trek', description: 'Next Star Trek scene; /trek pause or /trek play to hold or resume the rotation' })
     const usage = await $.session.usage()
     await update($, limits, () => usage.rateLimits.map(toLimit))
+    lastMessageAt = await read($, lastMessage)
     // the band only redraws when something changes: each redraw restarts the scene's animation
     $.clock.every(60_000, () => {
       void advanceIfDue($)
     })
     rotateAfter($)
-    $.ui.status(undefined)
+    $.clock.every(60_000, () => void tickCacheStatus($))
     return next(e)
   })
 
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('rateLimits')) await update($, limits, () => e.rateLimits.map(toLimit))
+    // a response just landed: the cache was used, and its hour restarted, now
+    if (e.changed.includes('context')) await markMessage($)
+    return next(e)
+  })
+
+  // the coloured timer: drawn beside the footer's mode labels, green while warm, red once cold
+  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+    await read($, tick)
+    const timer = cacheTimer(await $.clock.now())
+    if (!timer) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const own = await next(e)
+    return (
+      <Box flexDirection="row" gap={1}>
+        {own}
+        <Text color={timer.isWarm ? '#5fd38a' : '#ff6b81'}>{`Cache: ${evenDigits(timer.text)}`}</Text>
+      </Box>
+    )
+  })
+
+  on('prompt.submit', async ($, e, next) => {
+    await markMessage($)
     return next(e)
   })
 
@@ -4987,8 +5075,8 @@ export const register: Register = on => {
           ))}
         </Box>
         </Box>
-        <Box flexShrink={0} position="relative">
-          <Svg source={sceneSvg(idx)} alt={name} width={SCENE_W} height={SCENE_H} />
+        <Box key={`scene-${idx}`} flexShrink={0} position="relative">
+          <Svg source={sceneAt(idx, shownAt ? (now - shownAt) / 1000 : 0)} alt={name} width={SCENE_W} height={SCENE_H} />
           <Box position="absolute" top={0} right={0} flexDirection="row">
             <Button
               key="trek-pause"

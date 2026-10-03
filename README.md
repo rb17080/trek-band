@@ -13,7 +13,7 @@ A [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview): a li
 ## What you get
 
 - **Usage at a glance.** Two rings for the 5-hour and the weekly limit, each with how long until it resets: `4:39` (hours:minutes), `1:18:03` (days:hours:minutes). The rings turn amber at 75% and red at 90%.
-- **A prompt-cache timer** in Claude Code's status line (optional, [below](#prompt-cache-timer)). The prompt cache lasts an hour from the last message, yours or Claude's. The timer counts down in green while the cache is warm; once it expires it turns red and counts up, so you know a cache miss is coming. It goes blank in sessions idle for more than six hours.
+- **A prompt-cache timer** in the bar under the prompt, next to the model name: `Cache: 0:59`. The prompt cache lasts an hour from the last message, yours or Claude's. The timer counts down in green while the cache is warm; once it expires it turns red and counts up, so you know a cache miss is coming. It disappears in sessions idle for more than six hours.
 - **Thirteen scenes**, each a 17-second story that plays twice before the next one:
 
 | The Next Generation | | Voyager |
@@ -44,18 +44,6 @@ claude plugin install trek-band@trek-band
 
 The scenes draw in the **Code tab of the Claude desktop app**. In a terminal the band shows the usage figures as text.
 
-### Prompt-cache timer
-
-The timer is a [status line](https://code.claude.com/docs/en/statusline) script, not part of the mod: Claude Code hands status lines the cache's expiry time (`prompt_cache.expires_at`). Copy [`statusline/cache-timer.py`](statusline/cache-timer.py) to `~/.claude/` and add this to `~/.claude/settings.json` (needs Python 3):
-
-```json
-"statusLine": {
-  "type": "command",
-  "command": "python ~/.claude/cache-timer.py",
-  "refreshInterval": 1
-}
-```
-
 ## Controls
 
 | | |
@@ -66,9 +54,9 @@ The timer is a [status line](https://code.claude.com/docs/en/statusline) script,
 
 ## How it works
 
-trek-band is a mod: JavaScript hooks that run inside Claude Code. It draws the `AbovePrompt` band: the rings, the countdowns and the scene, an SVG animated with SMIL.
+trek-band is a mod: JavaScript hooks that run inside Claude Code. It draws the `AbovePrompt` band (the rings, the countdowns and the scene, an SVG animated with SMIL) and adds the cache timer to the `SessionMode` labels under the prompt.
 
-One detail shapes the design: redrawing the band restarts the scene's animation, so the band only redraws when something changes (a new scene, new usage figures).
+One detail shapes the design: the desktop app rebuilds every mod drawing whenever anything changes, and a rebuilt SVG starts its animation from zero. So each rebuild hands the scene over already advanced to where it was: every animation's start time is shifted back by the seconds the scene has been showing.
 
 Like any mod, it runs with your permissions. Read [`plugins/trek-band/hooks/register.tsx`](plugins/trek-band/hooks/register.tsx), or run `claude plugin validate plugins/trek-band` to list every event it hooks and every call it makes. It reads usage figures and draws. It makes no network requests and touches no files.
 

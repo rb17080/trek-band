@@ -3341,25 +3341,23 @@ function fpSmoke(pts: [number, number][]) {
   return p.svg()
 }
 
-// Picard's facepalm: a claw clamped over the brow and eyes, the pincer gap
-// a dark line across them, forearm running diagonally down the uniform
+// Picard's facepalm: his own claw pressed over his brow and near eye, the pincer gap a
+// shaded line across it, the forearm running back down to his shoulder. Same colours as
+// the rest of him, no outline.
 const FP_PALM = [
-  '..OOOOOOOOOOOO........',
-  '.OLLLLLLLLLLLLO.......',
-  '.OFFFFFFFFFFFFFO......',
-  '..OOOOOOOOFFFFFO......',
-  '...OFFFFFFFFFFFO......',
-  '....OSSSSSSFFFFFO.....',
-  '.....OOOOOOOLFFFFO....',
-  '...........OSLFFFFO...',
-  '............OSLFFFFO..',
-  '.............OSLFFFFO.',
-  '..............OSSSSSO.',
-  '...............OOOOO..',
+  '.......L...L..........',
+  '.......F...F..........',
+  '.......FFFFFS.........',
+  '......SFFFFFFS........',
+  '......SFSSSSSFF.......',
+  '.......SFFFFFFFF......',
+  '........SSSSFFFFF.....',
+  '.............SFFFFF...',
+  '...............SSSS...',
 ]
 
 function fpPalm(x: number, y: number) {
-  return new Pix().rows(FP_PALM, x, y - 1, { O: FP_OUT, L: '#ffcfa8', F: '#f7a985', S: '#d27a55' }).svg()
+  return new Pix().rows(FP_PALM, x, y - 1, { L: PICARD_HD.light, F: PICARD_HD.skin, S: PICARD_HD.shade }).svg()
 }
 
 // a claw half raised, bent at the elbow, on the right side of the body

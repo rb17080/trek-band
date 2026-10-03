@@ -11,6 +11,8 @@ const tick = atom({ plugin: 'trek-band', key: 'tick' } as const, 0)
 // When the last message (yours or Claude's) landed; kept in session state so a reload of the
 // mod doesn't wipe it and hide the cache timer until the next message
 const lastMessage = atom({ plugin: 'trek-band', key: 'lastMessage' } as const, 0)
+// How full the context window is
+const ctx = atom({ plugin: 'trek-band', key: 'ctx' } as const, { tokens: 0, window: 0 })
 
 // Lilac palette
 const C = {
@@ -4897,6 +4899,15 @@ const label = (kind: string) =>
   kind === 'five_hour' ? '5h' : kind === 'seven_day' ? '7d' : kind.replace(/_/g, ' ')
 
 const RING = 30
+// One meter's slot (ring, percent, countdown), so the two rows line up
+const METER_CELLS = 18
+
+// "264k", "1M"; with a decimal, "264.2k"
+function tokensText(n: number, decimals = 0) {
+  if (n >= 1e6) return `${+(n / 1e6).toFixed(decimals || (n % 1e6 ? 1 : 0))}M`
+  if (n >= 1e3) return `${(n / 1e3).toFixed(decimals)}k`
+  return String(n)
+}
 
 // How long each window runs
 const windowMs = (kind: string) => (kind === 'five_hour' ? 5 * 3600_000 : 7 * 86400_000)
@@ -4911,7 +4922,7 @@ function ringColor(l: Limit, now: number) {
   return (l.percentUsed * w) / elapsed >= 100 ? C.warn : C.ring
 }
 
-function ringSvg(limit: Limit, icon: 'clock' | 'cal' | 'book', color: string) {
+function ringSvg(limit: { percentUsed: number }, icon: 'clock' | 'cal' | 'book' | 'ctx', color: string) {
   const c = RING / 2
   const R = c - 2.5
   const circ = 2 * Math.PI * R
@@ -4920,7 +4931,9 @@ function ringSvg(limit: Limit, icon: 'clock' | 'cal' | 'book', color: string) {
   s += `<circle cx="${c}" cy="${c}" r="${R}" fill="#241a36" stroke="${C.track}" stroke-width="2.5"/>`
   s += `<circle cx="${c}" cy="${c}" r="${R}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="${(circ * pct) / 100} ${circ}" transform="rotate(-90 ${c} ${c})"/>`
   s +=
-    icon === 'book'
+    icon === 'ctx'
+      ? `<path d="M${c - 6} ${c - 4}h12M${c - 6} ${c}h12M${c - 6} ${c + 4}h7" stroke="${C.dim}" stroke-width="1.6" stroke-linecap="round" fill="none"/>`
+      : icon === 'book'
       ? `<path d="M${c} ${c - 3.5}q-3.5 -2 -7 -0.5v9q3.5 -1.5 7 0.5zM${c} ${c - 3.5}q3.5 -2 7 -0.5v9q-3.5 -1.5 -7 0.5z" fill="none" stroke="${C.dim}" stroke-width="1.4" stroke-linejoin="round"/>`
       : icon === 'clock'
       ? `<circle cx="${c}" cy="${c}" r="6" fill="none" stroke="${C.dim}" stroke-width="1.6"/><path d="M${c} ${c - 3.5}V${c}l2.5 1.8" stroke="${C.dim}" stroke-width="1.6" fill="none" stroke-linecap="round"/>`
@@ -5061,6 +5074,7 @@ export const register: Register = on => {
     await $.command.register({ name: 'trek', description: 'Next Star Trek scene; /trek pause or /trek play to hold or resume the rotation' })
     const usage = await $.session.usage()
     await update($, limits, () => usage.rateLimits.map(toLimit))
+    await update($, ctx, () => ({ tokens: usage.context.tokens ?? 0, window: usage.context.window }))
     lastMessageAt = await read($, lastMessage)
     void pollUsage($)
     $.clock.every(60_000, () => void pollUsage($))
@@ -5077,7 +5091,10 @@ export const register: Register = on => {
     if (e.changed.includes('rateLimits'))
       await update($, limits, old => [...e.rateLimits.map(toLimit), ...old.filter(l => !e.rateLimits.some(r => r.kind === l.kind))])
     // a response just landed: the cache was used, and its hour restarted, now
-    if (e.changed.includes('context')) await markMessage($)
+    if (e.changed.includes('context')) {
+      await markMessage($)
+      await update($, ctx, () => ({ tokens: e.context.tokens ?? 0, window: e.context.window }))
+    }
     return next(e)
   })
 
@@ -5128,14 +5145,39 @@ export const register: Register = on => {
       .filter(Boolean)
       .map(l => (l!.resetsAt && Date.parse(l!.resetsAt) <= now ? { ...l!, percentUsed: 0, resetsAt: undefined, isReset: true } : l)) as (Limit & { isReset?: boolean })[]
 
+    const context = await read($, ctx)
+    const ctxPct = context.window > 0 ? Math.min(100, (context.tokens / context.window) * 100) : 0
+    type Meter = { key: string; icon: 'clock' | 'cal' | 'book' | 'ctx'; pct: number; color: string; sub: string; subCells: number; hover: string }
+    const meters: Meter[] = shown.map(l => ({
+      key: l.kind,
+      icon: l.kind === 'five_hour' ? 'clock' : l.kind === 'seven_day' ? 'cal' : 'book',
+      pct: l.percentUsed,
+      color: ringColor(l, now),
+      sub: l.isReset ? '' : countdown(l, now),
+      subCells: countdownCells(l),
+      hover: [l.kind.startsWith('seven_day_') ? windowName(l.kind).replace(/^Weekly /, '') : '', `${l.percentUsed.toFixed(1)}%`, l.isReset ? '' : resetText(l, now)].filter(Boolean).join(' · '),
+    }))
+    if (context.window > 0)
+      meters.push({
+        key: 'context',
+        icon: 'ctx',
+        pct: ctxPct,
+        color: ctxPct >= 90 ? C.hot : ctxPct >= 75 ? C.warn : C.ring,
+        sub: tokensText(context.tokens),
+        subCells: 7,
+        hover: `${tokensText(context.tokens, 1)} / ${tokensText(context.window)}`,
+      })
+    const rows: Meter[][] = []
+    for (let i = 0; i < meters.length; i += 2) rows.push(meters.slice(i, i + 2))
+
     if (e.surface === 'terminal') {
       const { Box, Text } = $.ui.resolve(e)
       return (
         <Box gap={3}>
-          {shown.map(l => (
+          {meters.map(m => (
             <Box gap={1}>
-              <Text bold color={C.text}>{Math.round(l.percentUsed)}%</Text>
-              <Text color={C.dim}>{l.isReset ? '' : countdown(l, now)}</Text>
+              <Text bold color={C.text}>{Math.round(m.pct)}%</Text>
+              <Text color={C.dim}>{m.sub}</Text>
             </Box>
           ))}
         </Box>
@@ -5156,26 +5198,23 @@ export const register: Register = on => {
         overflow="hidden"
       >
         <Box flexDirection="column" gap={0} flexShrink={1} minWidth={0} overflow="hidden">
-        <Box flexDirection="row" alignItems="center" gap={3} flexShrink={1} minWidth={0} overflow="hidden">
-          {shown.length === 0 && <Text color={C.dim} wrap="truncate">Usage limits show up after Claude's first reply.</Text>}
-          {shown.map(l => (
-            <Box key={`ring-${l.kind}`} flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0} position="relative">
-              <Svg
-                source={ringSvg(l, l.kind === 'five_hour' ? 'clock' : l.kind === 'seven_day' ? 'cal' : 'book', ringColor(l, now))}
-                alt={`${label(l.kind)} ${Math.round(l.percentUsed)}%`}
-                width={RING}
-                height={RING}
-              />
-              <Text bold color={C.text} wrap="truncate">{Math.round(l.percentUsed)}%</Text>
-              <Box minWidth={countdownCells(l)} flexShrink={0}>
-                <Text color={C.dim}>{l.isReset ? '' : countdown(l, now)}</Text>
-              </Box>
-              <Box position="absolute" top={0} bottom={0} left={0} display="none" hover={{ display: 'flex' }} alignItems="center" backgroundColor={C.bg}>
-                <Text color={C.dim} wrap="truncate">{[l.kind.startsWith('seven_day_') ? windowName(l.kind).replace(/^Weekly /, '') : '', `${l.percentUsed.toFixed(1)}%`, l.isReset ? '' : resetText(l, now)].filter(Boolean).join(' · ')}</Text>
-              </Box>
+          {meters.length === 0 && <Text color={C.dim} wrap="truncate">Usage limits show up after Claude's first reply.</Text>}
+          {rows.map(row => (
+            <Box flexDirection="row" alignItems="center" gap={3} flexShrink={1} minWidth={0}>
+              {row.map(m => (
+                <Box key={`ring-${m.key}`} width={METER_CELLS} flexDirection="row" alignItems="center" gap={1} flexShrink={0} position="relative">
+                  <Svg source={ringSvg({ percentUsed: m.pct }, m.icon, m.color)} alt={`${m.key} ${Math.round(m.pct)}%`} width={RING} height={RING} />
+                  <Text bold color={C.text} wrap="truncate">{Math.round(m.pct)}%</Text>
+                  <Box minWidth={m.subCells} flexShrink={0}>
+                    <Text color={C.dim}>{m.sub}</Text>
+                  </Box>
+                  <Box position="absolute" top={0} bottom={0} left={0} display="none" hover={{ display: 'flex' }} alignItems="center" backgroundColor={C.bg}>
+                    <Text color={C.dim} wrap="truncate">{m.hover}</Text>
+                  </Box>
+                </Box>
+              ))}
             </Box>
           ))}
-        </Box>
         </Box>
         <Box flexDirection="row" alignItems="center" flexShrink={0}>
           <Box flexDirection="column" alignItems="center" flexShrink={0} marginRight={1}>

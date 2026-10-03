@@ -9314,15 +9314,15 @@ function threshold() {
 }
 
 // ---------- Timeless: Voyager in the ice ----------
-// One 17.17 s story, played once, starting and ending on the same quiet shot:
-//  0.0 - 2.6   a pale overcast sky, snow falling. Voyager lies tilted and half buried
-//              in the ice. Old Chakotay and old Harry Kim stand in their parkas, looking.
-//  2.6 - 6.2   they walk slowly across the ice to the ship.
-//  6.2 - 8.8   they stop and look up at her.
-//  8.8 - 12.0  Kim reaches out and lays his claw on the frozen hull, eyes closed; a little
+// One 17.17 s story, played once, starting and ending on the same empty shot:
+//  0.0 - 1.2   a pale overcast sky, snow falling. Voyager lies nose-down in a drift, half
+//              buried in the ice, her nacelle swept up into the sky.
+//  1.2 - 5.8   old Chakotay and old Harry Kim walk in from the left, side by side, to the ship.
+//  5.8 - 8.5   they stop and look up at her.
+//  8.5 - 11.0  Kim reaches out and lays his claw on the frozen hull, eyes closed; a little
 //              frost glints where he touches it and loose snow slides off.
-// 12.0 - 17.17 he lowers his claw; they turn and walk back to where they stood, and look
-//              at her once more.
+// 11.0 - 17.17 he lowers his claw; they turn and walk back out the way they came, leaving
+//              her alone in the snow again.
 // Snow, breath and drifting cloud run on loops that divide the story exactly.
 
 const TL_T = SCENE_SECONDS
@@ -9467,14 +9467,14 @@ function tlReach(k: CrabHD, x: number, y: number, stage: number) {
 }
 
 // a breath in the cold: a small pale puff drifting up from the face, on a loop
-function tlBreath(x: number, y: number, n: number, off: number) {
+function tlBreath(x: number, y: number, n: number, off: number, dir = 1) {
   const d = tlPer(n)
-  return `<rect x="${x * Q}" y="${y * Q}" width="${2 * Q}" height="${Q}" fill="#f7f9fc" opacity="0"><animateMotion path="M0 0 q 4 -3 5 -9" dur="${d}s" begin="${-off}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0;0.75;0;0" keyTimes="0;0.05;0.15;0.5;1" dur="${d}s" begin="${-off}s" repeatCount="indefinite"/></rect>`
+  return `<rect x="${x * Q}" y="${y * Q}" width="${2 * Q}" height="${Q}" fill="#f7f9fc" opacity="0"><animateMotion path="M0 0 q ${4 * dir} -3 ${5 * dir} -9" dur="${d}s" begin="${-off}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0;0.75;0;0" keyTimes="0;0.05;0.15;0.5;1" dur="${d}s" begin="${-off}s" repeatCount="indefinite"/></rect>`
 }
 
 // leg frames over the walking windows, one drawing every LEG s
 function tlLegPlan(walks: [number, number][]) {
-  const LEG = 0.24
+  const LEG = 0.3
   const on: [number, number][][] = [[], [], []]
   let last = 0
   for (const [a, b] of walks) {
@@ -9503,127 +9503,103 @@ function tlCrab(
   s += tlPath(new Pix().rect(x - 3, y + 4, 3, 2, k.skin).rect(x - 3, y + 6, 3, 1, k.shade))
   s += rightArm
   s += tlEyeTrack(x, y, eyes)
-  s += tlBreath(x + 18, y + 3, 6, breathOff)
+  // the breath comes from whichever way he faces
+  const left = merge(eyes.filter(e => e[2] === 'L').map(e => [e[0], e[1]] as [number, number]))
+  s += shown(tlBreath(x + 18, y + 3, 6, breathOff), complement(left, TL_T), TL_T)
+  s += shown(tlBreath(x - 2, y + 3, 6, breathOff, -1), left, TL_T)
   return `<g>${s}${tlMove(move)}</g>`
 }
 
 // ---- Voyager: side on, nose to the left, tilted nose-down into the ice ----
-// Drawn flat on her own grid (u along the hull, v down), then sheared so the tilt stays
-// pixel-crisp, then outlined. Saucer, engineering hull with the dark deflector, and the
-// nacelles swept up and back on their pylons, the far one just showing behind the near one.
-function tlShip(X0: number, Y0: number, slope: number) {
-  const flat = new Map<string, string>()
-  const put = (u: number, v: number, c: string) => flat.set(`${u},${v}`, c)
+// Each part is a simple shape on the ship's own axes (u back along the hull, v down); every
+// scene pixel is turned back onto those axes and tested, so the tilted silhouette stays clean.
+// Darker hull with a light top edge and a dark outline, so she stands off the pale sky.
+function tlShip(X0: number, Y0: number, th: number, S = 1) {
+  const cs = Math.cos(th)
+  const sn = Math.sin(th)
+  const HULL = '#667082'
+  const HULL_L = '#aab2bf'
+  const HULL_D = '#535c6e'
+  const UNDER = '#434b5c'
+  const WIN = '#262b37'
   const SNOW = '#f5f8fb'
-  const SNOW2 = '#dfe6ef'
-  const HULL = '#9099aa'
-  const HULL_L = '#b2bac7'
-  const HULL_D = '#737d90'
-  const UNDER = '#596274'
-  const WIN = '#353c4b'
-  const ICE = '#cfe2f1'
-
-  // far nacelle, a little higher and further back
-  for (let u = 34; u <= 52; u++) {
-    put(u, -14, u === 34 ? '#5e2c31' : SNOW2)
-    put(u, -13, u <= 35 ? '#6e3438' : '#6c768a')
+  const SL = 25 // saucer length
+  const K3 = 0.9 // how much of the saucer's top we see (three-quarter view from above)
+  const hw = (u: number) => {
+    const s = u / SL
+    return s <= 0 || s >= 1 ? 0 : 11 * Math.pow(s, 0.65) * Math.sqrt(1 - Math.pow(s, 2.5))
   }
-  // pylon, swept up and back from the engineering hull to the nacelle
-  for (let v = -9; v <= 2; v++) {
-    const u = 45 - Math.round((v + 9) * 0.4)
-    put(u - 1, v, v < -6 ? SNOW : HULL_L)
-    put(u, v, HULL)
-    put(u + 1, v, HULL_D)
-    put(u + 2, v, UNDER)
-  }
-  // near nacelle: snow on top, blue grille dark, bussard collector cold
-  for (let u = 30; u <= 51; u++) {
-    const rear = u > 48
-    put(u, -12, rear ? HULL_L : SNOW)
-    put(u, -11, HULL_L)
-    put(u, -10, u >= 35 && u <= 47 ? (u % 3 === 0 ? '#2e3850' : '#4f6288') : HULL)
-    if (!rear || u === 49) put(u, -9, HULL_D)
-  }
-  for (let v = -12; v <= -9; v++) {
-    put(30, v, v === -12 || v === -9 ? '#5e2c31' : '#7e3c3f')
-    put(31, v, v === -11 ? '#a2585a' : '#8a4648')
-    put(32, v, v === -12 ? '#c8b8bc' : '#7e3c3f')
-  }
-  put(29, -11, '#5e2c31'), put(29, -10, '#5e2c31')
-  ;[36, 41, 46].forEach(u => put(u, -8, ICE))
-
-  // engineering hull under the back of the saucer
-  for (let u = 15; u <= 46; u++) {
-    const h = u < 23 ? Math.round((u - 15) * 1.0) : u < 39 ? 8 : Math.round(8 - (u - 38) * 0.65)
-    for (let v = 2; v <= 2 + h; v++) {
-      let c = HULL
-      if (v === 2 + h) c = UNDER
-      else if (v === 1 + h) c = HULL_D
-      else if (v === 3) c = HULL_L
-      else if (v === 5 && u % 3 === 0 && u > 24 && u < 44) c = WIN
-      else if (u % 7 === 0) c = '#868fa0'
-      put(u, v, c)
+  const sTop = (u: number) => -K3 * hw(u)
+  const sEdge = (u: number) => K3 * hw(u) // near edge of the top surface
+  const sRim = (u: number) => (hw(u) > 0.5 ? K3 * hw(u) + 1.7 : sEdge(u))
+  const hTop = (u: number) => (u < 36 ? -2 : -2 + (u - 36) * 0.5)
+  const hBot = (u: number) => (u < 29 ? Math.min(9, 5 + (u - 11) * 0.5) : 9 - (u - 29) * 0.5)
+  const pyl = (v: number) => 34 + (-v - 2) * 1.0 // pylon centre line, short and swept up and back
+  const NA = 34
+  const NB = 50
+  const NT = -9
+  const NBo = -4.6
+  type Hit = [string, string]
+  const hit = (u: number, v: number): Hit | null => {
+    // nacelle, red bussard at the front, a dark warp grille along it
+    if (u >= NA && u <= NB && v >= NT && v <= NBo) {
+      const cap = (u < NA + 0.8 || u > NB - 0.8) && (v < NT + 0.8 || v > NBo - 0.8)
+      if (cap) return null
+      if (u < NA + 3) return ['nac', v < NT + 1 ? '#f07a80' : v > NBo - 1 ? '#7a1e27' : '#cf313c']
+      if (v < NT + 1) return ['nac', u > 38 && u < 45 ? SNOW : HULL_L]
+      if (v > NBo - 1) return ['nac', UNDER]
+      if (u > NB - 2) return ['nac', HULL_D]
+      return ['nac', v > NBo - 2.2 && u > NA + 4 && u < NB - 3 ? '#4f6390' : HULL]
     }
-    if (u > 34) put(u, 2, u % 4 === 0 ? SNOW2 : SNOW)
-  }
-  // the navigational deflector, dark and cold
-  for (let v = 4; v <= 8; v++) {
-    put(17, v, v === 4 || v === 8 ? '#6a80a6' : '#26304a')
-    put(18, v, v === 4 || v === 8 ? '#6a80a6' : v === 6 ? '#40507a' : '#2c3754')
-    put(19, v, v === 4 || v === 8 ? HULL_D : '#4a5a7c')
-  }
-
-  // the saucer: a long wedge, thin at the nose, deep under the bridge
-  const top = (u: number) => (u === 0 ? -1 : -Math.round(1.6 + 4.6 * Math.sqrt(Math.min(u, 30) / 30)))
-  const bot = (u: number) => (u === 0 ? 1 : Math.round(1.2 + 2.2 * Math.min(u, 30) / 30))
-  for (let u = 0; u <= 34; u++) {
-    let t = top(u)
-    let b = bot(u)
-    if (u >= 31) (t += [1, 2, 3, 5][u - 31]), (b -= [0, 0, 1, 1][u - 31])
-    const mid = Math.round((t + b) / 2)
-    for (let v = t; v <= b; v++) {
-      let c = HULL
-      if (v === t) c = SNOW
-      else if (v === t + 1) c = (u >= 4 && u <= 10) || (u >= 23 && u <= 28) ? SNOW2 : HULL_L
-      else if (v === t + 2 && u > 6) c = '#a3abb9'
-      else if (v === b) c = UNDER
-      else if (v === b - 1) c = '#a7afbc' // the bright rim of the saucer edge
-      else if (v === mid && u % 2 && u > 2 && u < 31) c = WIN
-      else if (v > mid) c = HULL_D
-      put(u, v, c)
+    // pylon
+    if (v > NBo - 0.5 && v <= hTop(u) + 1 && Math.abs(u - pyl(v)) < 1.3) return ['pyl', u < pyl(v) ? HULL : HULL_D]
+    // saucer: the long teardrop, its top seen from a little above, a dark rim along the near edge
+    if (u > 0 && u < SL && v >= sTop(u) && v <= sRim(u)) {
+      const t = sTop(u)
+      const e = sEdge(u)
+      if (v > e) {
+        if (v > sRim(u) - 1) return ['sau', UNDER]
+        return ['sau', Math.floor(u) % 2 === 0 && u > 3 && u < 23 ? WIN : HULL_D]
+      }
+      if (v < t + 1.5) return ['sau', (u > 6 && u < 10) || (u > 17 && u < 21) ? SNOW : HULL_L]
+      if (u > 15 && u < 18 && Math.abs(v - t - 2) < 0.6) return ['sau', '#c4cbd6'] // the bridge
+      if (v > e - 1) return ['sau', '#5e6779']
+      return ['sau', v < t + 3 ? '#9ba4b3' : v < (t + e) / 2 + 0.5 ? '#868fa0' : '#737c8e']
     }
-    if ((u >= 5 && u <= 9) || (u >= 24 && u <= 27)) put(u, t - 1, SNOW)
+    // engineering hull slung under and behind the saucer, deflector at its front
+    if (u >= 11 && u <= 44 && v >= hTop(u) && v <= hBot(u)) {
+      const t = hTop(u)
+      const b = hBot(u)
+      if (u > 14 && u < 18 && v > 5.4 && v < b - 0.6) return ['hul', u < 15.2 || v < 6.4 ? '#4d6690' : '#27324d']
+      if (v > b - 1) return ['hul', UNDER]
+      if (v < t + 1) return ['hul', u > 30 && u < 34 ? SNOW : HULL_L]
+      if (Math.abs(v - 2) < 0.5 && Math.floor(u) % 2 === 1 && u > 25 && u < 41) return ['hul', WIN]
+      return ['hul', v > b - 2.2 ? HULL_D : HULL]
+    }
+    return null
   }
-  // the bridge module, snow on it
-  for (let u = 18; u <= 24; u++) {
-    const t = top(u)
-    const edge = u === 18 || u === 24
-    put(u, t - 1, edge ? HULL_L : SNOW2)
-    if (!edge) put(u, t - 2, SNOW)
-  }
-
-  // shear into the scene, then outline the whole silhouette
+  const part = new Map<string, string>()
   const ship = new Pix()
-  const at = new Set<string>()
-  for (const [key, c] of flat) {
-    const [u, v] = key.split(',').map(Number)
-    const x = X0 + u
-    const y = Y0 + v - Math.round(u * slope)
-    ship.set(x, y, c)
-    at.add(`${x},${y}`)
-  }
-  const OUT = '#4a5263'
-  for (const key of at) {
-    const [x, y] = key.split(',').map(Number)
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const k = `${x + dx},${y + dy}`
-      if (!at.has(k)) ship.set(x + dx, y + dy, OUT)
+  for (let x = X0 - 8; x < GW + 2; x++) {
+    for (let y = 0; y < GH; y++) {
+      const dx = x + 0.5 - X0
+      const dy = y + 0.5 - Y0
+      const h = hit((dx * cs - dy * sn) / S, (dx * sn + dy * cs) / S)
+      if (!h) continue
+      part.set(`${x},${y}`, h[0])
+      ship.set(x, y, h[1])
     }
   }
-  // icicles under the saucer rim
-  ;[[4, 1], [8, 2], [13, 1], [27, 2], [30, 1]].forEach(([u, n]) => {
-    for (let i = 1; i <= n; i++) ship.set(X0 + u, Y0 + bot(u) + 1 + i - Math.round(u * slope), i === n ? '#e9f3fa' : ICE)
-  })
+  // a dark line round the back of the saucer where it meets the hull, then the outline round the whole silhouette
+  const OUT = '#2e3441'
+  for (const [key, pt] of part) {
+    const [x, y] = key.split(',').map(Number)
+    if (pt === 'hul' && [[0, -1], [-1, 0], [1, 0], [0, 1]].some(([ddx, ddy]) => part.get(`${x + ddx},${y + ddy}`) === 'sau')) ship.set(x, y, OUT)
+    for (const [ddx, ddy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+      const k = `${x + ddx},${y + ddy}`
+      if (!part.has(k)) ship.set(x + ddx, y + ddy, OUT)
+    }
+  }
   return ship
 }
 
@@ -9638,6 +9614,8 @@ function timeless() {
     <linearGradient id="tlSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a7b3c6"/><stop offset="0.55" stop-color="#d0d7e2"/><stop offset="0.7" stop-color="#e3e7ee"/></linearGradient>
     <linearGradient id="tlFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
     <radialGradient id="tlHoleG" cx="0" cy="1" r="1"><stop offset="0" stop-color="#000" stop-opacity="1"/><stop offset="0.6" stop-color="#000" stop-opacity="0.85"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+    <linearGradient id="tlFadeCG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.13" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <mask id="tlFadeC" maskUnits="userSpaceOnUse" x="-10" y="-10" width="${W + 20}" height="${H + 20}"><rect x="0" y="-10" width="${W + 10}" height="${H + 20}" fill="url(#tlFadeCG)"/></mask>
     <mask id="tlFade"><rect x="-10" y="-10" width="${W + 20}" height="${H + 20}" fill="url(#tlFadeG)"/></mask>
     <mask id="tlSnowM"><rect x="-10" y="-10" width="${W + 20}" height="${H + 20}" fill="url(#tlFadeG)"/><rect x="0" y="${30 * Q}" width="${44 * Q}" height="${18 * Q}" fill="url(#tlHoleG)"/></mask>
     <radialGradient id="tlSun"><stop offset="0" stop-color="#fbf8ef" stop-opacity="0.9"/><stop offset="0.25" stop-color="#f4f1ea" stop-opacity="0.5"/><stop offset="1" stop-color="#eef0f2" stop-opacity="0"/></radialGradient>
@@ -9699,28 +9677,25 @@ function timeless() {
   back += tlPath(plain)
 
   // ======== Voyager in the ice ========
-  const X0 = 41
-  const Y0 = 34
-  const SL = 0.24
-  const ship = tlShip(X0, Y0, SL)
-  // ice around her: a drift bank burying the nose and the belly, with jagged blue shards
+  const SX = 48
+  const SY = 38
+  const ship = tlShip(SX, SY, 0.5, 0.95)
+  // a drift bank burying the nose and the belly, with a few blue ice shards
   const bank = new Pix()
   const shipM = (ship as any).m as Map<number, Map<number, string>>
-  for (let x = 36; x < GW; x++) {
-    const sy = x < 42 ? 38 - Math.round((x - 36) * 0.8) : x < 49 ? 33 + Math.round((x - 42) * 0.7) : x < 64 ? 38 : 37 + Math.round(0.6 * Math.sin(x / 3.1)) - (x > 78 ? 1 : 0)
+  for (let x = 34; x < GW; x++) {
+    // a mound over the buried nose, then a drift ramp piled up under her belly
+    const sy = Math.min(39 - Math.round(4 * Math.exp(-(((x - 48.5) / 3.5) ** 2))), x < 54 ? 39 : Math.round(37.6 - (x - 54) * 0.12 + 0.7 * Math.sin(x / 2.7)))
     // ice glazing the hull just above the bank
-    for (let y = sy - 2; y < sy; y++) {
-      const row = shipM.get(y)
-      if (row && row.has(x)) row.set(x, (x + y) % 3 ? '#bcd2e3' : '#d7e7f3')
-    }
-    for (let y = sy; y < 40; y++) {
+    const row = shipM.get(sy - 1)
+    if (row && row.has(x)) row.set(x, x % 3 ? '#bcd2e3' : '#d7e7f3')
+    for (const [y, r] of shipM) if (y >= sy + 1) r.delete(x) // nothing of her shows through below the snow line
+    for (let y = sy; y < 41; y++) {
       let c = y === sy ? '#fbfcfe' : y === sy + 1 ? '#e9eef5' : '#dce3ed'
       if (y > sy + 2 && (x * 3 + y) % 11 === 0) c = '#c7d8e8'
       bank.set(x, y, c)
     }
-    bank.set(x, 40, '#e4e9f0')
   }
-  // ice shards jutting up around the hull
   const shard = (x: number, y: number, h: number, lean: number) => {
     for (let i = 0; i < h; i++) {
       const xx = x + Math.round(i * lean)
@@ -9728,11 +9703,9 @@ function timeless() {
       if (i < h - 2) bank.set(xx - 1, y - i, '#d4e6f3')
     }
   }
-  shard(39, 36, 4, 0.3)
-  shard(50, 37, 3, -0.3)
-  shard(66, 37, 4, 0.25)
-  shard(76, 37, 3, 0)
-  shard(87, 36, 4, -0.3)
+  shard(57, 37, 3, 0.3)
+  shard(70, 35, 4, -0.25)
+  shard(85, 33, 3, 0)
   s += `<g mask="url(#tlFade)">${back}`
   s += tlPath(ship) + tlPath(bank)
   s += `</g>`
@@ -9755,38 +9728,44 @@ function timeless() {
   s += `<g mask="url(#tlSnowM)">${snowLayer(70, tlPer(1), 6, tlPer(3), '#ffffff', 0.85, false)}${snowLayer(36, tlPer(1), -5, tlPer(2), '#f8faff', 0.8, true)}</g>`
 
   // ======== the beat sheet ========
+  // 0 - 1.2 the ship alone; they walk in as a pair (1.2 - 5.8) and stop by her; look up (to 8.5);
+  // Kim touches (8.5 - 11.0)
+  // the hull, eyes closed; they turn and walk back out the way they came (12.0 - 16.6).
   const ky = 26
-  const kx0 = 23
-  const kx1 = 29
-  const cx0 = 1
-  const cx1 = 7
-  const rA = 8.8 // Kim's claw starts to reach
+  const kx1 = 31 // Kim, standing by the ship
+  const kIn = -22 // ... and off the left edge
+  const cx1 = 12 // Chakotay, a step behind him (Kim's near claw overlaps his coat a little)
+  const cIn = kIn - (kx1 - cx1) // they walk as a pair, a fixed step apart
+  const rA = 8.5 // Kim's claw starts to reach
   const st = 0.15 // one in-between drawing
-  const rB = 11.4 // ... and comes back
+  const rB = 11.0 // ... and comes back
 
   // the touch: frost glints where the claw rests, loose snow slides off
   const tx = kx1 + 25.5
   const ty = ky + 4.5
-  s += `<circle cx="${tx * Q}" cy="${ty * Q}" r="9" fill="url(#tlFrost)" opacity="0">${tlFade([[rA + 3 * st + 0.2, 0], [rA + 1.4, 0.8], [rB - 0.6, 0.8], [rB + 0.6, 0]])}</circle>`
+  let fx = `<circle cx="${tx * Q}" cy="${ty * Q}" r="9" fill="url(#tlFrost)" opacity="0">${tlFade([[rA + 3 * st + 0.2, 0], [rA + 1.4, 0.8], [rB - 0.6, 0.8], [rB + 0.6, 0]])}</circle>`
   ;[[-1, 0, 6], [1, 0.35, 7], [2, 0.7, 5]].forEach(([dx, dt, fall], i) => {
     const t0 = rA + 0.9 + dt
-    s += `<rect x="${(tx + dx) * Q}" y="${(ky + 2) * Q}" width="${Q}" height="${Q}" fill="${i === 1 ? '#ffffff' : '#e9f1f8'}" opacity="0"><animateTransform attributeName="transform" type="translate" calcMode="spline" values="0 0;0 0;${i - 1} ${fall * Q};${i - 1} ${fall * Q}" keyTimes="0;${tlK(t0)};${tlK(t0 + 1.3)};1" keySplines="0 0 1 1;0.5 0 0.9 0.6;0 0 1 1" dur="${T}s" repeatCount="indefinite"/>${tlFade([[t0, 0], [t0 + 0.25, 0.95], [t0 + 1.0, 0.9], [t0 + 1.3, 0]])}</rect>`
+    fx += `<rect x="${(tx + dx) * Q}" y="${(ky + 2) * Q}" width="${Q}" height="${Q}" fill="${i === 1 ? '#ffffff' : '#e9f1f8'}" opacity="0"><animateTransform attributeName="transform" type="translate" calcMode="spline" values="0 0;0 0;${i - 1} ${fall * Q};${i - 1} ${fall * Q}" keyTimes="0;${tlK(t0)};${tlK(t0 + 1.3)};1" keySplines="0 0 1 1;0.5 0 0.9 0.6;0 0 1 1" dur="${T}s" repeatCount="indefinite"/>${tlFade([[t0, 0], [t0 + 0.25, 0.95], [t0 + 1.0, 0.9], [t0 + 1.3, 0]])}</rect>`
   })
+  s += fx
 
+  // the two of them come in from (and leave into) the band, through a narrow fade of their own
+  let them = ''
   // Chakotay: white hair, the tattoo over his brow, a heavy brown coat with a fur collar
   const chakCoat: TlCoat = { hair: '#d9dadd', hairL: '#f2f2f2', collar: '#e2d9c8', collarL: '#f3ede2', coat: '#6c5638', coatD: '#4e3d27', coatL: '#80694a', trim: '#3c2f1f' }
-  s += tlCrab(
-    TL_CHAK, chakCoat, cx0, ky - 1,
-    [[2.8, 6.0], [12.9, 16.2]],
-    [[0, 0, 0], [2.8, 0, 0], [6.0, cx1 - cx0, 0], [12.9, cx1 - cx0, 0], [16.2, 0, 0]],
+  them += tlCrab(
+    TL_CHAK, chakCoat, cx1, ky - 1,
+    [[1.2, 5.8], [12.0, 16.6]],
+    [[0, cIn - cx1, 0], [1.2, cIn - cx1, 0], [5.8, 0, 0], [12.0, 0, 0], [16.6, cIn - cx1, 0]],
     [
-      [0, 1.6, 'R'], [1.6, 1.75, 'X'], [1.75, 6.4, 'R'], [6.4, 9.6, 'U'], [9.6, 10.8, 'R'], [10.8, 10.95, 'X'], [10.95, 12.2, 'R'],
-      [12.2, 12.35, 'H'], [12.35, 14.9, 'L'], [14.9, 15.05, 'X'], [15.05, 16.5, 'L'], [16.5, 16.65, 'H'], [16.65, T, 'R'],
+      [0, 2.0, 'R'], [2.0, 2.15, 'X'], [2.15, 6.3, 'R'], [6.3, 9.0, 'U'], [9.0, 10.2, 'R'], [10.2, 10.35, 'X'], [10.35, 11.1, 'R'],
+      [11.2, 11.35, 'H'], [11.35, 16.7, 'L'], [16.7, 16.85, 'H'], [16.85, T, 'R'],
     ],
     '', // his near claw is tucked into his coat pocket
     p => {
-      p.set(cx0 + 14, ky, '#5b3b44').set(cx0 + 15, ky, '#5b3b44').set(cx0 + 16, ky + 1, '#5b3b44')
-      p.rect(cx0 + 13, ky + 7, 3, 1, chakCoat.coatD).set(cx0 + 14, ky + 7, TL_CHAK.shade)
+      p.set(cx1 + 14, ky, '#5b3b44').set(cx1 + 15, ky, '#5b3b44').set(cx1 + 16, ky + 1, '#5b3b44')
+      p.rect(cx1 + 13, ky + 7, 3, 1, chakCoat.coatD).set(cx1 + 14, ky + 7, TL_CHAK.shade)
     },
     0.9,
   )
@@ -9794,25 +9773,26 @@ function timeless() {
   // Harry Kim: salt-and-pepper hair, a blue parka and a dark red scarf
   const kimCoat: TlCoat = { hair: '#6f6f78', hairL: '#b9bac2', collar: '#8e2f3a', collarL: '#a8434e', coat: '#3f6987', coatD: '#2b4b63', coatL: '#527e9c', trim: '#24384a' }
   const reach = [
-    shown(tlPath(new Pix().rect(kx0 + 18, ky + 4, 3, 2, TL_KIM.skin).rect(kx0 + 18, ky + 6, 3, 1, TL_KIM.shade)), [[0, rA], [rB + 3 * st, T]], T),
-    shown(tlReach(TL_KIM, kx0, ky, 1), [[rA, rA + st], [rB + 2 * st, rB + 3 * st]], T),
-    shown(tlReach(TL_KIM, kx0, ky, 2), [[rA + st, rA + 2 * st], [rB + st, rB + 2 * st]], T),
-    shown(tlReach(TL_KIM, kx0, ky, 3), [[rA + 2 * st, rB + st]], T),
+    shown(tlPath(new Pix().rect(kx1 + 18, ky + 4, 3, 2, TL_KIM.skin).rect(kx1 + 18, ky + 6, 3, 1, TL_KIM.shade)), [[0, rA], [rB + 3 * st, T]], T),
+    shown(tlReach(TL_KIM, kx1, ky, 1), [[rA, rA + st], [rB + 2 * st, rB + 3 * st]], T),
+    shown(tlReach(TL_KIM, kx1, ky, 2), [[rA + st, rA + 2 * st], [rB + st, rB + 2 * st]], T),
+    shown(tlReach(TL_KIM, kx1, ky, 3), [[rA + 2 * st, rB + st]], T),
   ].join('')
-  s += tlCrab(
-    TL_KIM, kimCoat, kx0, ky,
-    [[2.6, 6.2], [12.7, 16.3]],
-    [[0, 0, 0], [2.6, 0, 0], [6.2, kx1 - kx0, 0], [12.7, kx1 - kx0, 0], [16.3, 0, 0]],
+  them += tlCrab(
+    TL_KIM, kimCoat, kx1, ky,
+    [[1.2, 5.8], [12.0, 16.6]],
+    [[0, kIn - kx1, 0], [1.2, kIn - kx1, 0], [5.8, 0, 0], [12.0, 0, 0], [16.6, kIn - kx1, 0]],
     [
-      [0, 1.1, 'R'], [1.1, 1.25, 'X'], [1.25, 6.6, 'R'], [6.6, 8.6, 'U'], [8.6, 9.4, 'R'], [9.4, 10.9, 'X'], [10.9, 12.0, 'R'],
-      [12.0, 12.15, 'H'], [12.15, 16.6, 'L'], [16.6, 16.75, 'H'], [16.75, T, 'R'],
+      [0, 3.4, 'R'], [3.4, 3.55, 'X'], [3.55, 6.0, 'R'], [6.1, 8.2, 'U'], [8.2, 8.8, 'R'], [8.8, 10.9, 'X'], [10.9, 11.6, 'R'],
+      [11.5, 11.65, 'H'], [11.65, 16.7, 'L'], [16.7, 16.85, 'H'], [16.85, T, 'R'],
     ],
     reach,
     p => {
-      p.rect(kx0 + 3, ky + 7, 1, 2, kimCoat.collar).set(kx0 + 3, ky + 9, kimCoat.collarL)
+      p.rect(kx1 + 3, ky + 7, 1, 2, kimCoat.collar).set(kx1 + 3, ky + 9, kimCoat.collarL)
     },
     2.2,
   )
+  s += `<g mask="url(#tlFadeC)">${them}</g>`
 
   // near snow, in front of everything: a few brighter flakes, a little faster
   s += `<g mask="url(#tlSnowM)">${snowLayer(22, tlPer(2), 7, tlPer(4), '#ffffff', 0.95, true)}</g>`

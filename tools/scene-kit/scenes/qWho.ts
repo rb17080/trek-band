@@ -89,10 +89,10 @@ function qwCube() {
   // green lights deep in the hull, pulsing
   const lights = new Pix()
   ;[[58, 12], [64, 20], [71, 15], [78, 26], [61, 31], [74, 33], [82, 10], [68, 27]].forEach(([x, y]) => lights.set(x, y, '#5dff8a'))
-  s += `<g>${lights.svg()}<animate attributeName="opacity" values="0.5;1;0.5" dur="2.4s" repeatCount="indefinite"/></g>`
+  s += `<g>${lights.svg()}<animate attributeName="opacity" values="0.5;1;0.5" dur="${(SCENE_SECONDS / 7).toFixed(3)}s" repeatCount="indefinite"/></g>`
   const lights2 = new Pix()
   ;[[62, 16], [77, 19], [66, 34], [80, 30], [59, 24]].forEach(([x, y]) => lights2.set(x, y, '#9dffb5'))
-  s += `<g>${lights2.svg()}<animate attributeName="opacity" values="1;0.45;1" dur="3.1s" repeatCount="indefinite"/></g>`
+  s += `<g>${lights2.svg()}<animate attributeName="opacity" values="1;0.45;1" dur="${(SCENE_SECONDS / 6).toFixed(3)}s" repeatCount="indefinite"/></g>`
   return s
 }
 
@@ -125,29 +125,19 @@ function qwShip(x: number, y: number) {
 
 // One smooth animation on the story timeline: keys are [seconds, value]
 const QW_EASE = '0.42 0 0.58 1'
-function qwAnim(attr: string, keys: [number, string][], tag = 'animate', extra = '') {
+function qwAnim(attr: string, keys: [number, string, string?][], tag = 'animate', extra = '') {
   const T = SCENE_SECONDS
   const k = [...keys]
   if (k[0][0] > 0) k.unshift([0, k[0][1]])
   if (k[k.length - 1][0] < T) k.push([T, k[k.length - 1][1]])
   const kt = k.map(([t]) => +(t / T).toFixed(4))
   kt[kt.length - 1] = 1
-  const splines = k.slice(1).map(() => QW_EASE).join(';')
+  const splines = k.slice(1).map(x => x[2] ?? QW_EASE).join(';')
   return `<${tag} attributeName="${attr}" ${extra}dur="${T}s" repeatCount="indefinite" calcMode="spline" keySplines="${splines}" values="${k.map(([, v]) => v).join(';')}" keyTimes="${kt.join(';')}"/>`
 }
 const qwFade = (keys: [number, number][]) => qwAnim('opacity', keys.map(([t, v]) => [t, String(v)] as [number, string]))
-const qwMove = (keys: [number, number, number][]) =>
-  qwAnim('transform', keys.map(([t, x, y]) => [t, `${x} ${y}`] as [number, string]), 'animateTransform', 'type="translate" ')
-
-// the right claw half raised, on its way up or down
-function qwArmMid(k: CrabHD, x: number, y: number) {
-  const p = new Pix()
-  p.rect(x + 18, y + 4, 3, 2, k.skin)
-  p.rect(x + 20, y + 1, 2, 3, k.skin).rect(x + 21, y + 1, 1, 3, k.shade)
-  p.rect(x + 20, y, 4, 1, k.skin).rect(x + 20, y - 2, 1, 2, k.skin).rect(x + 23, y - 2, 1, 2, k.skin)
-  p.set(x + 20, y - 2, k.light).set(x + 23, y - 2, k.light)
-  return p.svg()
-}
+const qwMove = (keys: [number, number, number, string?][]) =>
+  qwAnim('transform', keys.map(([t, x, y, sp]) => [t, `${x} ${y}`, sp] as [number, string, string?]), 'animateTransform', 'type="translate" ')
 
 // the snap: a small sparkle at the claw that swells, drifts upward and fades
 function qwSnap(x: number, y: number, t: number) {
@@ -197,10 +187,11 @@ function qWho() {
     }
   }
   ;[[26, 3], [44, 26], [40, 40], [16, 12], [88, 42]].forEach(([x, y], i) => {
+    const tw = `dur="${(SCENE_SECONDS / [7, 6, 5, 4, 3][i]).toFixed(3)}s" begin="-${i * 0.6}s"`
     const glow = new Pix()
     glow.set(x - 1, y, '#bfa8ee').set(x + 1, y, '#bfa8ee').set(x, y - 1, '#bfa8ee').set(x, y + 1, '#bfa8ee')
-    back += `<g>${glow.svg()}<animate attributeName="opacity" values="0.15;0.8;0.15" dur="${2.6 + i * 0.7}s" begin="${i * 0.6}s" repeatCount="indefinite"/></g>`
-    back += `<g>${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0.6;1;0.6" dur="${2.6 + i * 0.7}s" begin="${i * 0.6}s" repeatCount="indefinite"/></g>`
+    back += `<g>${glow.svg()}<animate attributeName="opacity" values="0.15;0.8;0.15" ${tw} repeatCount="indefinite"/></g>`
+    back += `<g>${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0.6;1;0.6" ${tw} repeatCount="indefinite"/></g>`
   })
   // System J-25: the sky slowly turns sickly green while the Borg are here
   back += `<rect width="${W}" height="${H}" fill="#0f3a22" opacity="0">${qwFade([[cubeIn[0], 0], [cubeIn[1] + 0.4, 0.42], [cubeOut[0], 0.42], [cubeOut[1], 0]])}</rect>`
@@ -217,8 +208,10 @@ function qWho() {
   const sy = 7
   const hold: [number, number] = [-4, -1]
   const pulled: [number, number] = [6, 4]
-  const shipKeys: [number, number, number][] = [
-    [0, 36, -6], [beamOut[0], ...hold], [drag[0], ...hold], [drag[1], ...pulled], [beamBack[1], ...pulled], [T, -16, -2],
+  const shipKeys: [number, number, number, string?][] = [
+    [0, 36, -6], [beamOut[0], ...hold], [drag[0], ...hold], [drag[1], ...pulled], [beamBack[1] + 0.3, ...pulled],
+    // released: it flies on off the left edge, then glides back in from the right to its opening spot
+    [15.7, -112, 0, '0.5 0 0.85 0.6'], [15.71, 126, -6, '0 0 1 1'], [T, 36, -6, '0.2 0.55 0.45 1'],
   ]
 
   // tractor beam: narrow at the cube's emitter, spreading over the ship; it reaches out
@@ -242,13 +235,11 @@ function qWho() {
 
   // the ship, with a soft green lock halo and a slow 1 px shudder while it is held
   const halo = `<ellipse cx="${(sx + 11) * Q}" cy="${(sy + 4) * Q}" rx="30" ry="14" fill="url(#qwLock)" opacity="0">${qwFade([[beamOut[1] - 0.3, 0], [beamOut[1] + 0.7, 1], [beamBack[0], 1], [beamBack[1] + 0.4, 0]])}</ellipse>`
-  const jig = ['0 0', '1 0', '1 1', '0 1']
-  const jv = ['0 0']
-  const jt = [0]
+  const jig: [number, number, number][] = [[drag[0], 0, 0]]
   let n = 0
-  for (let t = drag[0]; t < beamBack[0]; t += 0.35) jt.push(+(t / T).toFixed(4)), jv.push(jig[n++ % jig.length])
-  jt.push(+(beamBack[0] / T).toFixed(4)), jv.push('0 0')
-  const shudder = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${T}s" repeatCount="indefinite" values="${jv.join(';')}" keyTimes="${jt.join(';')}"/>`
+  for (let t = drag[0] + 0.4; t < beamBack[0] - 0.2; t += 0.4) jig.push([t, n % 2 ? 0 : 1, n++ % 2 ? 0 : 1])
+  jig.push([beamBack[0], 0, 0])
+  const shudder = qwMove(jig)
   s += `<g>${qwMove(shipKeys)}${halo}<g>${qwShip(sx, sy)}${shudder}</g></g>`
 
   // ---- Q: Starfleet captain's red, four pips, one eyebrow up
@@ -260,29 +251,31 @@ function qWho() {
     p.rect(qx + 4, qy + 7, 2, 2, '#e8c547').set(qx + 4, qy + 7, '#fff3b0')
   }
   const brow = '#5a2a1c'
-  const lookingLeft: [number, number][] = [[0, turn1], look]
-  const lookingRight: [number, number][] = [[turn1, look[0]], [look[1], T]]
-  const raised: [number, number][] = [[4.1, 6.0], [12.75, 14.25]]
-  const midArm: [number, number][] = [[3.7, 4.1], [6.0, 6.4], [12.4, 12.75], [14.25, 14.65]]
-  // facing out at us (left): one eye half-lidded, the other brow arched
-  const qLeft = crabHD(QW_Q, qx, qy, 'left', T, { left: [], right: [] }, [], 4.7, p => {
-    p.rect(qx + 4, qy + 2, 2, 1, QW_Q.shade)
-    p.set(qx + 9, qy + 1, brow).rect(qx + 10, qy, 2, 1, brow).set(qx + 12, qy + 1, brow)
-    insignia(p)
-  })
-  // facing the ship (right)
-  const qRight = crabHD(QW_Q, qx, qy, 'right', T, { left: [], right: raised }, [], 4.3, p => {
-    p.rect(qx + 6, qy + 2, 2, 1, QW_Q.shade)
-    p.set(qx + 11, qy + 1, brow).rect(qx + 12, qy, 2, 1, brow).set(qx + 14, qy + 1, brow)
-    insignia(p)
-  })
-  // the open claw closes on each snap
+  const k = QW_Q
+  const turnBack = 15.3 // after the cube is gone he turns back to face us
+  const TS = 0.35 // a turn takes this long
+  // the face: 0 = looking out at us (left), 1 = at the ship (right)
+  const face: [number, number][] = [[turn1, 0], [turn1 + TS, 1], [look[0], 1], [look[0] + TS, 0], [look[1], 0], [look[1] + TS, 1], [turnBack, 1], [turnBack + TS, 0]]
+  const { p: qb } = clawdBody(k, qx, qy, 'left')
+  qb.rect(qx + 4, qy + 2, 2, 3, k.skin).rect(qx + 10, qy + 2, 2, 3, k.skin)
+  insignia(qb)
+  let qs = qb.svg() + armRestHD(k, qx, qy, 'left') + armRestHD(k, qx, qy, 'right')
+  // light and shade on the body edges cross-fade as he turns
+  const edgeR = new Pix().rect(qx, qy + 1, 1, 5, k.shade).rect(qx + 17, qy + 1, 1, 5, k.rim).set(qx, qy + 8, k.lowerShade!).set(qx + 17, qy + 8, k.lower!)
+  qs += `<g opacity="0">${edgeR.svg()}${qwFade(face)}</g>`
+  // eyes (one half-lidded), the arched brow and the blinking lids glide together
+  const fp = new Pix().rect(qx + 4, qy + 2, 2, 3, EYE_HD).rect(qx + 10, qy + 2, 2, 3, EYE_HD).rect(qx + 4, qy + 2, 2, 1, k.shade)
+  fp.set(qx + 9, qy + 1, brow).rect(qx + 10, qy, 2, 1, brow).set(qx + 12, qy + 1, brow)
+  const lids = new Pix().rect(qx + 4, qy + 2, 2, 3, k.skin).rect(qx + 10, qy + 2, 2, 3, k.skin)
+  qs += `<g>${fp.svg()}<g opacity="0">${lids.svg()}<animate attributeName="opacity" calcMode="discrete" dur="${(T / 4).toFixed(4)}s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.92;0.95"/></g>${qwMove(face.map(([t, v]) => [t, v * 2 * Q, 0]))}</g>`
+  // the right claw rises smoothly out of the shoulder (clipped there), snaps shut, sinks back
   const cx = qx + 18
   const cy = qy - 8
-  const closed = new Pix().rect(cx + 1, cy + 1, 2, 2, QW_Q.skin).set(cx + 1, cy, QW_Q.light).set(cx + 2, cy, QW_Q.light)
-  let qs = shown(qLeft, lookingLeft, T) + shown(qRight, lookingRight, T)
-  qs += shown(qwArmMid(QW_Q, qx, qy), midArm, T)
-  qs += shown(closed.svg(), [[snap1, 6.0], [snap2, 14.25]], T)
+  const UP = '0.25 0.6 0.4 1'
+  const arm: [number, number, number, string?][] = [[3.7, 0, 12 * Q], [4.15, 0, 0, UP], [6.0, 0, 0], [6.4, 0, 12 * Q], [12.4, 0, 12 * Q], [12.8, 0, 0, UP], [14.25, 0, 0], [14.65, 0, 12 * Q]]
+  const half = new Pix().rect(cx + 1, cy + 1, 2, 1, k.skin)
+  const closed = new Pix().rect(cx + 1, cy, 2, 1, k.light)
+  qs += `<clipPath id="qwArmClip"><rect x="${(qx + 17) * Q}" y="${(qy - 9) * Q}" width="${7 * Q}" height="${13 * Q}"/></clipPath><g clip-path="url(#qwArmClip)"><g transform="translate(0 ${12 * Q})">${armUpHD(k, qx, qy, 'right')}${shown(half.svg(), [[snap1 - 0.09, 6.4], [snap2 - 0.09, 14.65]], T)}${shown(closed.svg(), [[snap1, 6.4], [snap2, 14.65]], T)}${qwMove(arm)}</g></g>`
   // green rim light from the cube on his right side, coming and going with it
   const rim = new Pix().rect(qx + 17, qy + 1, 1, 5, '#8fe0a0').rect(qx + 18, qy + 4, 3, 1, '#8fe0a0')
   qs += `<g opacity="0">${rim.svg()}${qwFade([[cubeIn[0], 0], [cubeIn[1], 0.8], [cubeOut[0], 0.8], [cubeOut[1], 0]])}</g>`

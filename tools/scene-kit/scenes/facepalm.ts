@@ -76,10 +76,15 @@ function fpMinus(a: [number, number][], b: [number, number][]): [number, number]
 
 const fpKT = (ts: number[]) => ts.map(t => +(t / SCENE_SECONDS).toFixed(4)).join(';')
 
-// discrete positions on the story timeline: [time, dx, dy] in art pixels, held until the next key
-function fpMove(keys: [number, number, number][]) {
-  const ks = keys[0][0] === 0 ? keys : [[0, 0, 0] as [number, number, number], ...keys]
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${SCENE_SECONDS}s" repeatCount="indefinite" values="${ks.map(([, x, y]) => `${x * Q} ${y * Q}`).join(';')}" keyTimes="${fpKT(ks.map(k => k[0]))}"/>`
+// eased positions on the story timeline: [time, dx, dy] in art pixels; between two keys
+// the move eases in and out, equal keys hold
+const FP_EASE = '0.4 0 0.2 1'
+function fpTween(keys: [number, number, number][]) {
+  const T = SCENE_SECONDS
+  const ks = [...keys]
+  if (ks[0][0] > 0) ks.unshift([0, ks[0][1], ks[0][2]])
+  if (ks[ks.length - 1][0] < T) ks.push([T, ks[ks.length - 1][1], ks[ks.length - 1][2]])
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${T}s" repeatCount="indefinite" values="${ks.map(([, x, y]) => `${x * Q} ${y * Q}`).join(';')}" keyTimes="${ks.map(k => +(k[0] / T).toFixed(5)).join(';')}" keySplines="${ks.slice(1).map(() => FP_EASE).join(';')}"/>`
 }
 
 // smooth opacity over the story: [time, opacity] keys, linear between them
@@ -137,13 +142,14 @@ function fpPalm(x: number, y: number) {
 }
 
 // a claw half raised, bent at the elbow, on the right side of the body
-function fpArmHalf(k: CrabHD, x: number, y: number) {
+function fpArmHalf(k: CrabHD, x: number, y: number, h = 5) {
   const p = new Pix()
+  const top = y + 6 - h
   p.rect(x + 18, y + 4, 2, 2, k.skin)
-  p.rect(x + 19, y + 1, 2, 5, k.skin).rect(x + 20, y + 1, 1, 5, k.shade)
-  p.rect(x + 18, y - 2, 1, 2, k.skin).rect(x + 21, y - 2, 1, 2, k.skin)
-  p.rect(x + 18, y, 4, 1, k.skin)
-  p.set(x + 18, y - 2, k.light).set(x + 21, y - 2, k.light)
+  p.rect(x + 19, top, 2, h, k.skin).rect(x + 20, top, 1, h, k.shade)
+  p.rect(x + 18, top - 3, 1, 2, k.skin).rect(x + 21, top - 3, 1, 2, k.skin)
+  p.rect(x + 18, top - 1, 4, 1, k.skin)
+  p.set(x + 18, top - 3, k.light).set(x + 21, top - 3, k.light)
   return p.svg()
 }
 
@@ -192,14 +198,16 @@ function facepalm() {
   // two layers of stars drifting past, clipped to the screen
   let seed = 7
   const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
-  const layer = (n: number, c: string, period: number, op: number) => {
+  // each layer is a tile of width L repeated across the screen; it scrolls one tile per
+  // period, and the period divides the story length, so the loop restart is seamless
+  const layer = (n: number, c: string, L: number, period: number, op: number) => {
     const p = new Pix()
     const pts: [number, number][] = []
-    for (let i = 0; i < n; i++) pts.push([Math.floor(rnd() * 49), Math.floor(rnd() * 15)])
-    for (const [x, y] of pts) p.set(31 + x, 4 + y, c).set(31 + x + 49, 4 + y, c)
-    return `<g opacity="${op}">${p.svg()}<animateTransform attributeName="transform" type="translate" values="0 0;${-49 * Q} 0" dur="${period}s" repeatCount="indefinite"/></g>`
+    for (let i = 0; i < n; i++) pts.push([Math.floor(rnd() * L), Math.floor(rnd() * 15)])
+    for (let k = 0; k * L < 49 + L; k++) for (const [x, y] of pts) p.set(31 + x + k * L, 4 + y, c)
+    return `<g opacity="${op}">${p.svg()}<animateTransform attributeName="transform" type="translate" values="0 0;${-L * Q} 0" dur="${+period.toFixed(4)}s" repeatCount="indefinite"/></g>`
   }
-  back += `<g clip-path="url(#fpScr)">${layer(22, '#8d8fc0', 40, 0.7)}${layer(9, '#e8ecff', 22, 1)}`
+  back += `<g clip-path="url(#fpScr)">${layer(11, '#8d8fc0', 25, SCENE_SECONDS, 0.7)}${layer(4, '#e8ecff', 19, SCENE_SECONDS / 2, 1)}`
   // a small planet arc in the lower corner of the screen
   const pl = new Pix()
   for (let x = -12; x <= 12; x++) for (let y = -12; y <= 12; y++) {
@@ -226,7 +234,7 @@ function facepalm() {
   ]
   bits.forEach(([x, y, w, c], i) => {
     const r = new Pix().rect(x, y, w, 1, c).svg()
-    back += i % 3 === 0 ? `<g>${r}<animate attributeName="opacity" values="1;0.4;1" dur="${2.2 + (i % 4) * 0.7}s" repeatCount="indefinite"/></g>` : r
+    back += i % 3 === 0 ? `<g>${r}<animate attributeName="opacity" values="1;0.4;1" dur="${+(SCENE_SECONDS / [8, 6, 5, 4][i % 4]).toFixed(4)}s" repeatCount="indefinite"/></g>` : r
   })
 
   // carpet with a lit strip at the console foot and a few seams
@@ -325,19 +333,27 @@ function facepalm() {
     p.rect(cx - 1, cy + 2, 3, 3, c1).set(cx, cy + 5, c1).set(cx - 1, cy + 2, c2).set(cx + 1, cy + 4, c2).set(cx, cy + 3, '#fff2c0')
     return p.svg()
   }
+  // arms go rest -> half-raised -> up (and back) in ~0.09 s steps; the maracas
+  // follow the claw through the same three positions
+  const qRightUp = merge([snapArm1, snapArm2, ...rightShake])
+  const armL = armPhases(leftUp)
+  const armR = armPhases(qRightUp)
   kit += shown(lowMaraca(qx - 3, qy + 6, '#e2452e', '#f2d04a'), complement(merge(leftUp), T), T)
-  kit += shown(lowMaraca(qx + 20, qy + 6, '#3fa35a', '#f2d04a'), complement(merge([...rightShake, snapArm2]), T), T)
+  kit += shown(lowMaraca(qx + 20, qy + 6, '#3fa35a', '#f2d04a'), complement(qRightUp, T), T)
+  kit += shown(maraca(qx - 8, qy - 8, '#e2452e', '#f2d04a'), armL.mid, T)
+  kit += shown(maraca(qx - 4, qy - 13, '#e2452e', '#f2d04a'), armL.up, T)
+  kit += shown(maraca(qx + 22, qy - 8, '#3fa35a', '#f2d04a'), armR.mid, T)
+  kit += shown(maraca(qx + 19, qy - 13, '#3fa35a', '#f2d04a'), armR.up, T)
   q += `<g opacity="0">${kit}${fpFade([[costumeIn, 0], [costumeIn + 0.5, 1], [costumeOut, 1], [costumeOut + 0.6, 0]])}</g>`
   q += fpLegs(FP_Q, qx, qy)
 
   // arms: one up for each snap, then left and right in turn on the beat
-  const qRightUp = merge([snapArm1, snapArm2, ...rightShake])
   q += shown(armRestHD(FP_Q, qx, qy, 'left'), complement(merge(leftUp), T), T)
   q += shown(armRestHD(FP_Q, qx, qy, 'right'), complement(qRightUp, T), T)
-  q += shown(armUpHD(FP_Q, qx, qy, 'left'), leftUp, T)
-  q += shown(armUpHD(FP_Q, qx, qy, 'right'), qRightUp, T)
-  q += shown(maraca(qx - 4, qy - 13, '#e2452e', '#f2d04a'), leftUp, T)
-  q += shown(maraca(qx + 19, qy - 13, '#3fa35a', '#f2d04a'), rightShake, T)
+  q += shown(armMidHD(FP_Q, qx, qy, 'left'), armL.mid, T)
+  q += shown(armMidHD(FP_Q, qx, qy, 'right'), armR.mid, T)
+  q += shown(armUpHD(FP_Q, qx, qy, 'left'), armL.up, T)
+  q += shown(armUpHD(FP_Q, qx, qy, 'right'), armR.up, T)
   // shake lines beside the raised maraca
   const shake = new Pix().set(qx - 6, qy - 13, '#fff2c0').set(qx - 6, qy - 11, '#fff2c0').set(qx, qy - 13, '#fff2c0')
   q += shown(shake.svg(), leftUp.map(([a, b]) => [a + 0.1, b - 0.1] as [number, number]), T)
@@ -401,8 +417,9 @@ function facepalm() {
     .rect(px0 + 4, py0 + 3, 2, 1, PICARD_HD.shade).rect(px0 + 10, py0 + 3, 2, 1, PICARD_HD.shade)
     .rect(px0 + 3, py0 + 1, 2, 1, brow).rect(px0 + 5, py0 + 2, 2, 1, brow)
     .rect(px0 + 11, py0 + 1, 2, 1, brow).rect(px0 + 9, py0 + 2, 2, 1, brow).svg()
-  pc += shown(half, [[4.5, 5.5], [11.6, 13.0]], T)
-  pc += shown(narrow, [[5.5, 7.7], [14.2, T]], T)
+  // (the glare softens back to his opening look in the last second, for a seamless restart)
+  pc += shown(half, [[4.5, 5.5], [11.6, 13.0], [16.2, 16.55]], T)
+  pc += shown(narrow, [[5.5, 7.7], [14.2, 16.2]], T)
   // eyes shut for the sigh, and a blink
   const shut = new Pix().rect(px0 + 4, py0 + 2, 2, 3, PICARD_HD.skin).rect(px0 + 10, py0 + 2, 2, 3, PICARD_HD.skin)
     .rect(px0 + 4, py0 + 4, 2, 1, PICARD_HD.shade).rect(px0 + 10, py0 + 4, 2, 1, PICARD_HD.shade).svg()
@@ -410,18 +427,26 @@ function facepalm() {
   // the facepalm: the far eye squeezed shut, the claw over the near one
   const squeeze = new Pix().rect(px0 + 4, py0 + 2, 2, 3, PICARD_HD.skin).rect(px0 + 3, py0 + 3, 4, 1, PICARD_HD.shade).set(px0 + 3, py0 + 2, PICARD_HD.shade).svg()
   pc += shown(squeeze, [hold], T)
-  // the claw comes up in steps, presses in, rubs the brow twice, and goes back down
+  // the claw lifts in one-pixel steps, cross-fades into the palm over 0.15 s, glides in
+  // to the face, rubs the brow twice, glides back out and lowers the same way
   const palmKeys: [number, number, number][] = [
-    [0, 6, 1], [6.9, 4, 1], [7.3, 2, 0], [7.7, 0, 0],
-    [8.9, -1, 0], [9.5, 0, 0], [10.1, -1, 0], [10.7, 0, 0],
-    [11.6, 2, 0], [11.9, 4, 1], [12.2, 6, 1],
+    [0, 6, 1], [6.5, 6, 1], [7.7, 0, 0],
+    [8.7, 0, 0], [8.95, -1, 0], [9.35, -1, 0], [9.6, 0, 0],
+    [9.95, 0, 0], [10.2, -1, 0], [10.55, -1, 0], [10.8, 0, 0],
+    [11.5, 0, 0], [12.4, 6, 1],
   ]
-  pc += shown(`<g>${fpPalm(px0, py0)}${fpMove(palmKeys)}</g>`, [palmOn], T)
-  pc += shown(fpArmHalf(PICARD_HD, px0, py0), [raiseHalf, lowerHalf], T)
-  pc += shown(armRestHD(PICARD_HD, px0, py0, 'left'), [[0, T]], T)
-  pc += shown(armRestHD(PICARD_HD, px0, py0, 'right'), complement(merge([raiseHalf, palmOn, lowerHalf]), T), T)
-  // he sinks a pixel into the facepalm and again into the sigh
-  s += `<g>${pc}${fpMove([[0, 0, 0], [8.0, 0, 1], [11.6, 0, 0], [13.1, 0, 1], [14.1, 0, 0]])}</g>`
+  pc += `<g opacity="0">${fpPalm(px0, py0)}${fpTween(palmKeys)}${fpFade([[6.45, 0], [6.6, 1], [12.4, 1], [12.55, 0]])}</g>`
+  const lift: [number, [number, number][]][] = [
+    [2, [[5.9, 6.05], [12.8, 12.9]]],
+    [3, [[6.05, 6.2], [12.7, 12.8]]],
+    [4, [[6.2, 6.35], [12.6, 12.7]]],
+  ]
+  for (const [h, on] of lift) pc += shown(fpArmHalf(PICARD_HD, px0, py0, h), on, T)
+  pc += shown(`<g>${fpArmHalf(PICARD_HD, px0, py0)}${fpFade([[6.45, 1], [6.6, 0], [12.4, 0], [12.55, 1]])}</g>`, [[6.35, 6.6], [12.4, 12.6]], T)
+  pc += armRestHD(PICARD_HD, px0, py0, 'left')
+  pc += shown(armRestHD(PICARD_HD, px0, py0, 'right'), complement([[5.9, 12.9]], T), T)
+  // he sinks a pixel into the facepalm and again into the sigh, easing down and up
+  s += `<g>${pc}${fpTween([[7.8, 0, 0], [8.1, 0, 1], [11.45, 0, 1], [11.75, 0, 0], [12.95, 0, 0], [13.25, 0, 1], [13.95, 0, 1], [14.25, 0, 0]])}</g>`
   s += fpLegs(PICARD_HD, px0, py0)
   // the sigh: a soft puff drifting off toward Q and thinning out
   const puff = new Pix().rect(px0 - 4, py0 + 4, 4, 3, '#cfc6dc').rect(px0 - 3, py0 + 3, 2, 1, '#ece6f4').set(px0 - 5, py0 + 5, '#a99fbb').set(px0, py0 + 6, '#a99fbb').svg()

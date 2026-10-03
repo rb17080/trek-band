@@ -3,7 +3,8 @@
 // cube ahead. The bioship's veins light up one by one and its orb charges; a
 // steady beam reaches the cube; cracks creep across it; it splits and drifts
 // apart in soft orange and green blooms. The 8472 turns to Janeway, and she
-// raises a claw: her decision. Debris drifts on into a quiet ending.
+// raises a claw: her decision. The debris fades, she lowers her claw and the
+// Collective pulls the cube back together, so the scene ends where it began.
 
 const SC8_JANEWAY: CrabHD = {
   skin: '#d97757',
@@ -19,10 +20,14 @@ const SC8_JANEWAY: CrabHD = {
 const sc8K = (t: number) => +(t / SCENE_SECONDS).toFixed(4)
 
 // translate in grid units along the story, keyed in seconds (must start at 0, end at SCENE_SECONDS)
-function sc8Move(keys: [number, number, number][], discrete = false, easeOut = false) {
+// ease: 'inout' glides (slow-fast-slow), 'out' starts quick and settles; a key may carry its own spline
+const SC8_INOUT = '0.45 0 0.55 1'
+const SC8_OUT = '0.25 0.6 0.45 1'
+const sc8Loop = (n: number) => +(SCENE_SECONDS / n).toFixed(4) // ambient periods that divide the scene
+function sc8Move(keys: ([number, number, number] | [number, number, number, string])[], ease: 'inout' | 'out' = 'inout') {
   const t = keys.map(k => sc8K(k[0])).join(';')
   const v = keys.map(k => `${+(k[1] * Q).toFixed(2)} ${+(k[2] * Q).toFixed(2)}`).join(';')
-  const mode = discrete ? ' calcMode="discrete"' : easeOut ? ` calcMode="spline" keySplines="${keys.slice(1).map(() => '0.25 0.6 0.45 1').join(';')}"` : ''
+  const mode = ` calcMode="spline" keySplines="${keys.slice(1).map(k => k[3] || (ease === 'out' ? SC8_OUT : SC8_INOUT)).join(';')}"`
   return `<animateTransform attributeName="transform" type="translate"${mode} dur="${SCENE_SECONDS}s" repeatCount="indefinite" values="${v}" keyTimes="${t}"/>`
 }
 
@@ -86,6 +91,8 @@ function scorpion() {
   const tSplit = 9.6 // the cube gives way
   const tTurn = 12.2 // the 8472 turns to Janeway
   const tClaw = 13.8 // Janeway raises her claw
+  const tBack = 15.4 // the quiet ending: everything eases back to how the scene began...
+  const tHome = 16.9 // ...and is home before the replay starts again
 
   let s = `<defs>
     <linearGradient id="sc8Sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0d0a1c"/><stop offset="1" stop-color="#241a3a"/></linearGradient>
@@ -97,7 +104,7 @@ function scorpion() {
     <radialGradient id="sc8Charge"><stop offset="0" stop-color="#ffe9a0" stop-opacity="0.6"/><stop offset="1" stop-color="#ffb347" stop-opacity="0"/></radialGradient>
     <radialGradient id="sc8GlowO"><stop offset="0" stop-color="#ff9a3d" stop-opacity="0.45"/><stop offset="1" stop-color="#ff7a3a" stop-opacity="0"/></radialGradient>
     <radialGradient id="sc8GlowG"><stop offset="0" stop-color="#6ef07a" stop-opacity="0.4"/><stop offset="1" stop-color="#2a9a48" stop-opacity="0"/></radialGradient>
-    <clipPath id="sc8BeamClip"><rect x="${47 * Q}" y="0" width="0" height="${H}"><animate attributeName="width" dur="${dur}s" repeatCount="indefinite" values="0;0;${14 * Q};${14 * Q}" keyTimes="0;${sc8K(tFire)};${sc8K(tHit)};1"/></rect></clipPath>
+    <clipPath id="sc8BeamClip"><rect x="${47 * Q}" y="0" width="0" height="${H}"><animate attributeName="width" dur="${dur}s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 1 1;${SC8_OUT};0 0 1 1" values="0;0;${14 * Q};${14 * Q}" keyTimes="0;${sc8K(tFire)};${sc8K(tHit)};1"/></rect></clipPath>
   </defs>`
 
   // ---- background: space, nebulae, stars, distant cube ----
@@ -116,7 +123,7 @@ function scorpion() {
   ;[[12, 20], [48, 2], [86, 30], [58, 26], [30, 22]].forEach(([x, y], i) => {
     const glow = new Pix()
     glow.set(x - 1, y, '#bfa8ee').set(x + 1, y, '#bfa8ee').set(x, y - 1, '#bfa8ee').set(x, y + 1, '#bfa8ee')
-    back += `<g>${sc8Path(glow)}<animate attributeName="opacity" values="0.15;0.8;0.15" dur="${2.6 + i * 0.7}s" begin="${i * 0.5}s" repeatCount="indefinite"/></g>`
+    back += `<g>${sc8Path(glow)}<animate attributeName="opacity" values="0.15;0.8;0.15" dur="${sc8Loop(7 - i)}s" begin="-${i * 0.5}s" repeatCount="indefinite"/></g>`
     back += new Pix().set(x, y, '#ffffff').svg()
   })
   // a second, distant cube: the Collective is everywhere
@@ -183,19 +190,21 @@ function scorpion() {
   // each crack layer glows in over 0.8 s, then cools to embers after the split
   const crackT = [tHit + 0.3, tHit + 1.0, tHit + 1.7]
   const crackSvg = (n: number) =>
-    `<g opacity="0">${sc8Path(cracks[n])}${sc8Fade([[0, 0], [crackT[n], 0], [crackT[n] + 0.8, 1], [tSplit + 0.6, 1], [tSplit + 3.5, 0.35], [dur, 0.25]])}</g>`
+    `<g opacity="0">${sc8Path(cracks[n])}${sc8Fade([[0, 0], [crackT[n], 0], [crackT[n] + 0.8, 1], [tSplit + 0.6, 1], [tSplit + 3.5, 0.35], [tBack, 0.25], [tHome, 0], [dur, 0]])}</g>`
   const lightsDie = (p: Pix) =>
-    `<g>${`<g>${sc8Path(p)}<animate attributeName="opacity" values="0.2;0.9;0.2" dur="2.4s" repeatCount="indefinite"/></g>`}${sc8Fade([[0, 1], [tSplit, 1], [tSplit + 1.5, 0], [dur, 0]])}</g>`
-  // the halves drift apart, quickly at first, then slower and slower
-  const halfMove = (dx: number, dy: number) => sc8Move([[0, 0, 0], [tSplit, 0, 0], [dur, dx, dy]], false, true)
+    `<g>${`<g>${sc8Path(p)}<animate attributeName="opacity" values="0.2;0.9;0.2" dur="${sc8Loop(7)}s" repeatCount="indefinite"/></g>`}${sc8Fade([[0, 1], [tSplit, 1], [tSplit + 1.5, 0], [tBack, 0], [tHome, 1], [dur, 1]])}</g>`
+  // the halves drift apart, quickly at first, then slower and slower; at the end the
+  // Collective pulls them gently back together (the cube regenerates for the replay)
+  const halfMove = (dx: number, dy: number) =>
+    sc8Move([[0, 0, 0], [tSplit, 0, 0], [tBack, dx, dy, SC8_OUT], [tHome, 0, 0, SC8_INOUT], [dur, 0, 0]])
   let cube = ''
   cube += `<g>${sc8Path(leftHalf)}${lightsDie(pulseL)}${crackSvg(0)}${crackSvg(1)}${crackSvg(2)}${halfMove(-3, -1)}</g>`
   cube += `<g>${sc8Path(rightHalf)}${lightsDie(pulseR)}${halfMove(7, -2)}</g>`
-  // while the beam holds it, the cube trembles: one art pixel, slowly
-  const shake: [number, number, number][] = [[0, 0, 0]]
+  // while the beam holds it, the cube trembles: a smooth sway of half an art pixel
+  const shake: [number, number, number][] = [[0, 0, 0], [tHit, 0, 0]]
   for (let t = tHit + 0.4, n = 0; t < tSplit - 0.2; t += 0.4, n++) shake.push([t, n % 2 ? 0 : 0.5, n % 2 ? 0.5 : 0])
   shake.push([tSplit - 0.2, 0, 0], [dur, 0, 0])
-  s += `<g>${cube}${sc8Move(shake, true)}</g>`
+  s += `<g>${cube}${sc8Move(shake)}</g>`
 
   // ---- the bioship: a spiny organic bulb with three prongs curving forward ----
   const ship = new Pix()
@@ -241,16 +250,14 @@ function scorpion() {
   veinPts.forEach(([x, y]) => veinGroups[x < 25 ? 0 : x < 31 ? 1 : 2].set(x + 2, by + y, '#ffcf6a'))
   veinGroups.forEach((g, i) => {
     const a = tVeins + i * 1.1
-    s += `<g opacity="0">${sc8Path(g)}${sc8Fade([[0, 0], [a, 0], [a + 1.8, 1], [tSplit, 1], [tSplit + 2.5, 0.25], [dur, 0.2]])}</g>`
+    s += `<g opacity="0">${sc8Path(g)}${sc8Fade([[0, 0], [a, 0], [a + 1.8, 1], [tSplit, 1], [tSplit + 2.5, 0.25], [tBack, 0.2], [tHome, 0], [dur, 0]])}</g>`
   })
 
-  // the orb gathers at the focal point in three sizes, each held over a second
+  // the orb gathers at the focal point: it swells smoothly from a spark to full size
   const orbRings = ['#ffe9a0', '#ffc35a', '#e8892e']
   const orbFade = sc8Fade([[0, 0], [tOrb, 0], [tOrb + 0.6, 1], [tSplit, 1], [tSplit + 1.2, 0], [dur, 0]])
-  let orb = ''
-  orb += shown(sc8Burst(nx, ny, 0, orbRings, 11, '#fff2c0'), [[tOrb, tOrb + 1.4]], dur)
-  orb += shown(sc8Burst(nx, ny, 1, orbRings, 12, '#fff2c0'), [[tOrb + 1.4, tOrb + 2.6]], dur)
-  orb += shown(sc8Burst(nx, ny, 2, orbRings, 13, '#fff2c0'), [[tOrb + 2.6, dur]], dur)
+  const orbGrow = `<animateTransform attributeName="transform" type="scale" calcMode="spline" keySplines="0 0 1 1;${SC8_INOUT};0 0 1 1" dur="${dur}s" repeatCount="indefinite" values="0.2;0.2;1;1" keyTimes="0;${sc8K(tOrb)};${sc8K(tOrb + 2.6)};1"/>`
+  const orb = `<g transform="translate(${(nx + 0.5) * Q} ${(ny + 0.5) * Q})"><g>${orbGrow}<g transform="translate(${-Q / 2} ${-Q / 2})">${sc8Burst(0, 0, 2, orbRings, 13, '#fff2c0')}</g></g></g>`
   s += `<g opacity="0">${orb}${orbFade}</g>`
   s += `<circle cx="${(nx + 0.5) * Q}" cy="${(ny + 0.5) * Q}" r="12" fill="url(#sc8Charge)" opacity="0">${sc8Fade([[0, 0], [tOrb, 0], [tFire, 0.9], [tSplit, 0.9], [tSplit + 1.4, 0], [dur, 0]])}</circle>`
 
@@ -308,7 +315,7 @@ function scorpion() {
     const c = !hot ? (i % 2 ? '#59616b' : '#4a515a') : i % 2 ? '#ffb347' : '#5fe36a'
     const sz = i % 5 === 0 ? 2 : 1
     const end = hot ? 0.35 : 0.9
-    s += `<rect x="${(59 + Math.round((rnd() - 0.5) * 6)) * Q}" y="${(11 + Math.round((rnd() - 0.5) * 6)) * Q}" width="${sz * Q}" height="${sz * Q}" fill="${c}" opacity="0"><animateTransform attributeName="transform" type="translate" calcMode="spline" keySplines="0 0 1 1;0.2 0.6 0.4 1" dur="${dur}s" repeatCount="indefinite" values="0 0;0 0;${dx.toFixed(1)} ${dy.toFixed(1)}" keyTimes="0;${sc8K(t0)};1"/>${sc8Fade([[0, 0], [t0, 0], [t0 + 0.5, 1], [t0 + 3, end], [dur, end]])}</rect>`
+    s += `<rect x="${(59 + Math.round((rnd() - 0.5) * 6)) * Q}" y="${(11 + Math.round((rnd() - 0.5) * 6)) * Q}" width="${sz * Q}" height="${sz * Q}" fill="${c}" opacity="0"><animateTransform attributeName="transform" type="translate" calcMode="spline" keySplines="0 0 1 1;0.2 0.6 0.4 1" dur="${dur}s" repeatCount="indefinite" values="0 0;0 0;${dx.toFixed(1)} ${dy.toFixed(1)}" keyTimes="0;${sc8K(t0)};1"/>${sc8Fade([[0, 0], [t0, 0], [t0 + 0.5, 1], [Math.min(t0 + 3, tBack - 0.1), end], [tBack, end], [tHome - 0.3, 0], [dur, 0]])}</rect>`
   }
 
   // ---- Voyager's hull as the foreground deck ----
@@ -318,7 +325,7 @@ function scorpion() {
   for (let i = 0; i < 8; i++) hull.set(20 + Math.floor(rnd() * 70), 44 + Math.floor(rnd() * 4), rnd() < 0.5 ? '#251f33' : '#140f1e')
   s += `<g mask="url(#sc8Fade)">${sc8Path(hull)}</g>`
   ;[44, 62, 80].forEach((x, i) => {
-    s += `<g>${new Pix().set(x, 43, '#ffb347').svg()}<animate attributeName="opacity" values="1;0.35;1" dur="2.6s" begin="${i * 0.8}s" repeatCount="indefinite"/></g>`
+    s += `<g>${new Pix().set(x, 43, '#ffb347').svg()}<animate attributeName="opacity" values="1;0.35;1" dur="${sc8Loop(6)}s" begin="-${i * 0.8}s" repeatCount="indefinite"/></g>`
   })
 
   // ---- Species 8472: tall, tripod-legged, mottled cream-green ----
@@ -375,46 +382,58 @@ function scorpion() {
     pts.forEach(([i, j]) => p.set(ax + i, ay + j, '#ffe066'))
     return sc8Path(p)
   }
+  // one pair of eyes that glides: onto the cube, then down at Janeway, and home at the end
   const tWatch = tHit + 0.4
-  let eyes = ''
-  eyes += shown(eyePair([[6, 3], [9, 3]]), [[0, tWatch]], dur)
-  eyes += shown(eyePair([[5, 3], [8, 3]]), [[tWatch, tTurn]], dur)
-  eyes += shown(eyePair([[5, 4], [8, 4]]), [[tTurn, dur]], dur)
-  const eyeGlow = `<animate attributeName="opacity" values="0.75;1;0.75" dur="3.2s" repeatCount="indefinite"/>`
-  // the head turns in two steps: eyes drop first, then the head leans toward her
-  const headTurn = sc8Move([[0, 0, 0], [tTurn + 0.5, -1, 0], [dur, -1, 0]], true)
-  s += `<g>${sc8Path(body)}<g>${sc8Path(head)}<g>${eyes}${eyeGlow}</g>${headTurn}</g></g>`
+  const eyes = eyePair([[6, 3], [9, 3]])
+  const eyeMove = sc8Move([[0, 0, 0], [tWatch, 0, 0], [tWatch + 0.35, -1, 0], [tTurn, -1, 0], [tTurn + 0.35, -1, 1], [tBack + 0.4, -1, 1], [tBack + 1.0, 0, 0], [dur, 0, 0]])
+  const eyeGlow = `<animate attributeName="opacity" values="0.75;1;0.75" dur="${sc8Loop(5)}s" repeatCount="indefinite"/>`
+  // the head turns in two steps: eyes drop first, then the head leans toward her (and back at the end)
+  const headTurn = sc8Move([[0, 0, 0], [tTurn + 0.3, 0, 0], [tTurn + 0.8, -1, 0], [tBack + 0.3, -1, 0], [tBack + 0.9, 0, 0], [dur, 0, 0]])
+  s += `<g>${sc8Path(body)}<g>${sc8Path(head)}<g>${eyes}${eyeGlow}${eyeMove}</g>${headTurn}</g></g>`
 
   // ---- Janeway: auburn bun, black jacket, red shoulders, four pips ----
   const jx = 26
   const jy = 28
-  s += crabHD(
-    SC8_JANEWAY, jx, jy, 'right', dur,
-    { left: [], right: [[tClaw + 0.7, dur]] },
-    [],
-    4.7,
-    p => {
-      const hair = '#8a3a1e'
-      const hairL = '#b2522a'
-      const dark = '#5e2412'
-      p.rect(jx + 1, jy, 15, 1, hair).rect(jx + 4, jy, 9, 1, hairL)
-      p.rect(jx, jy + 1, 2, 3, hair).set(jx + 2, jy + 1, hair).set(jx, jy + 3, dark)
-      p.rect(jx + 2, jy - 1, 11, 1, hair).rect(jx + 5, jy - 1, 6, 1, hairL)
-      p.rows(['.bbb.', 'bLLbb', 'bLbbd', '.bbd.'], jx, jy - 4, { b: hair, L: hairL, d: dark })
-      p.rect(jx + 8, jy + 6, 2, 1, '#8a8a96')
-      for (const c of [12, 13, 14, 15]) p.set(jx + c, jy + 7, '#e8c547')
-      p.rect(jx + 4, jy + 6, 2, 2, '#e8c547').set(jx + 4, jy + 6, '#fff3b0')
-    },
-  )
-  // her claw comes up in two in-between frames before it is raised high
   const k = SC8_JANEWAY
+  const jw = clawdBody(k, jx, jy, 'right')
+  {
+    const p = jw.p
+    const hair = '#8a3a1e'
+    const hairL = '#b2522a'
+    const dark = '#5e2412'
+    p.rect(jx + 1, jy, 15, 1, hair).rect(jx + 4, jy, 9, 1, hairL)
+    p.rect(jx, jy + 1, 2, 3, hair).set(jx + 2, jy + 1, hair).set(jx, jy + 3, dark)
+    p.rect(jx + 2, jy - 1, 11, 1, hair).rect(jx + 5, jy - 1, 6, 1, hairL)
+    p.rows(['.bbb.', 'bLLbb', 'bLbbd', '.bbd.'], jx, jy - 4, { b: hair, L: hairL, d: dark })
+    p.rect(jx + 8, jy + 6, 2, 1, '#8a8a96')
+    for (const c of [12, 13, 14, 15]) p.set(jx + c, jy + 7, '#e8c547')
+    p.rect(jx + 4, jy + 6, 2, 2, '#e8c547').set(jx + 4, jy + 6, '#fff3b0')
+  }
+  s += sc8Path(jw.p) + armRestHD(k, jx, jy, 'left')
+  // blinks, on a period that divides the scene
+  const lids = new Pix()
+  jw.ex.forEach(e => lids.rect(jx + e, jy + 2, 2, 3, k.skin))
+  s += `<g opacity="0">${sc8Path(lids)}<animate attributeName="opacity" calcMode="discrete" dur="${sc8Loop(4)}s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.92;0.95"/></g>`
+  // her claw comes up through four in-between drawings, holds, and comes back down for the ending
   const arm1 = new Pix()
   arm1.rect(jx + 20, jy + 2, 2, 3, k.skin).rect(jx + 22, jy + 1, 2, 2, k.skin).set(jx + 21, jy + 4, k.shade).set(jx + 23, jy + 2, k.shade)
   arm1.set(jx + 24, jy - 1, k.light).set(jx + 24, jy + 0, k.skin).set(jx + 22, jy - 1, k.light).set(jx + 22, jy, k.skin)
   const arm2 = new Pix()
   arm2.rect(jx + 19, jy, 2, 4, k.skin).set(jx + 20, jy + 3, k.shade).rect(jx + 20, jy - 2, 2, 2, k.skin).set(jx + 21, jy - 1, k.shade)
   arm2.rect(jx + 19, jy - 4, 1, 2, k.skin).rect(jx + 22, jy - 4, 1, 2, k.skin).rect(jx + 19, jy - 3, 4, 1, k.skin).set(jx + 19, jy - 4, k.light).set(jx + 22, jy - 4, k.light)
-  s += shown(sc8Path(arm1), [[tClaw, tClaw + 0.35]], dur)
-  s += shown(sc8Path(arm2), [[tClaw + 0.35, tClaw + 0.7]], dur)
+  const arm3 = new Pix() // three quarters up
+  arm3.rect(jx + 18, jy + 4, 3, 2, k.skin).rect(jx + 19, jy - 2, 2, 6, k.skin).rect(jx + 20, jy - 2, 1, 6, k.shade)
+  arm3.rect(jx + 18, jy - 6, 1, 3, k.skin).rect(jx + 21, jy - 6, 1, 3, k.skin).rect(jx + 18, jy - 4, 4, 1, k.skin).rect(jx + 19, jy - 3, 2, 1, k.skin)
+  arm3.set(jx + 18, jy - 6, k.light).set(jx + 21, jy - 6, k.light)
+  const ST = 0.11
+  const up = tClaw + 4 * ST
+  const down = tBack // she lowers it as the ending settles
+  const step = (n: number): [number, number][] => [[tClaw + n * ST, tClaw + (n + 1) * ST], [down + (3 - n) * ST, down + (4 - n) * ST]]
+  s += shown(armRestHD(k, jx, jy, 'right'), [[0, tClaw + ST], [tClaw + 2 * ST, tClaw + 3 * ST], [down + ST, down + 2 * ST], [down + 3 * ST, dur]], dur)
+  s += shown(sc8Path(arm1), step(0), dur)
+  s += shown(armMidHD(k, jx, jy, 'right'), step(1), dur)
+  s += shown(sc8Path(arm2), step(2), dur)
+  s += shown(sc8Path(arm3), step(3), dur)
+  s += shown(armUpHD(k, jx, jy, 'right'), [[up, down]], dur)
   return s
 }

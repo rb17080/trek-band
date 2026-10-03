@@ -25,7 +25,7 @@ const __H = GH * Q
 const __ease = 0.8 / SCENE_SECONDS
 const __veil = \`<rect width="\${__W}" height="\${__H}" fill="\${C.bg}"><animate attributeName="opacity" values="1;0;0;1" keyTimes="0;\${__ease.toFixed(4)};\${(1 - __ease).toFixed(4)};1" dur="\${SCENE_SECONDS}s" repeatCount="indefinite"/></rect>\`
 const __title = \`<text x="5" y="\${__H - 4}" font-family="system-ui,Segoe UI,sans-serif" font-size="6.5" font-weight="700" letter-spacing="1" fill="\${C.dim}" stroke="#16101f" stroke-width="2" stroke-linejoin="round" paint-order="stroke">${TITLE}</text>\`
-const __svg = \`<svg xmlns="http://www.w3.org/2000/svg" width="\${__W}" height="\${__H}" viewBox="0 0 \${__W} \${__H}" shape-rendering="crispEdges">\${__body}\${__veil}\${__title}</svg>\`
+const __svg = \`<svg xmlns="http://www.w3.org/2000/svg" width="\${__W}" height="\${__H}" viewBox="0 0 \${__W} \${__H}" shape-rendering="crispEdges">\${__body}\${__title}</svg>\`
 const fs = require('fs')
 const problems: string[] = []
 if (__svg.length > 90000) problems.push('SVG is ' + __svg.length + ' chars; keep it under 80000')

@@ -64,6 +64,17 @@ function cocChain(x: number, y0: number, y1: number) {
   return p.svg()
 }
 
+// smooth eased translate over the story: [time, x, y] in CSS px; each move eases in and out
+const COC_EASE = '0.4 0 0.2 1'
+const COC_SWING = '0.45 0 0.55 1'
+function cocTween(keys: [number, number, number][], spline = COC_EASE) {
+  const T = SCENE_SECONDS
+  const ks = [...keys]
+  if (ks[0][0] > 0) ks.unshift([0, ks[0][1], ks[0][2]])
+  if (ks[ks.length - 1][0] < T) ks.push([T, ks[ks.length - 1][1], ks[ks.length - 1][2]])
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${T}s" repeatCount="indefinite" values="${ks.map(([, x, y]) => `${x} ${y}`).join(';')}" keyTimes="${ks.map(k => +(k[0] / T).toFixed(5)).join(';')}" keySplines="${ks.slice(1).map(() => spline).join(';')}"/>`
+}
+
 function chainOfCommandHD() {
   const dur = SCENE_SECONDS
   const W = GW * Q
@@ -122,9 +133,11 @@ function chainOfCommandHD() {
   for (let c = 2; c < GW; c += 6) wall.rect(c, 44, 1, 4, '#100c0a')
   back += cols + wall.svg()
   // amber slit glows, slowly breathing
-  for (const cx of [17, 39, 61, 83]) {
-    back += `<ellipse cx="${(cx + 0.5) * Q}" cy="${22.5 * Q}" rx="16" ry="6" fill="url(#cocAmber)"><animate attributeName="opacity" values="0.6;1;0.6" dur="${3.2 + cx / 40}s" repeatCount="indefinite"/></ellipse>`
-  }
+  // (periods divide the story length, so the loop restart lands on the same glow)
+  ;[17, 39, 61, 83].forEach((cx, i) => {
+    const per = +(dur / [5, 4, 3, 4][i]).toFixed(4)
+    back += `<ellipse cx="${(cx + 0.5) * Q}" cy="${22.5 * Q}" rx="16" ry="6" fill="url(#cocAmber)"><animate attributeName="opacity" values="0.6;1;0.6" calcMode="spline" keyTimes="0;0.5;1" keySplines="${COC_SWING};${COC_SWING}" dur="${per}s" begin="${-i * 1.3}s" repeatCount="indefinite"/></ellipse>`
+  })
   s += `<g mask="url(#cocFade)">${back}</g>`
 
   // ---- the four lights: steady, breathing very slowly ----
@@ -143,8 +156,9 @@ function chainOfCommandHD() {
   // dust motes drifting through the beams
   for (let i = 0; i < 6; i++) {
     const x = 40 + i * 7
-    const d = 6 + (i % 3) * 1.7
-    s += `<rect x="${x * Q}" y="${8 * Q}" width="${Q / 2}" height="${Q / 2}" fill="#fff6d8" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 6 : -6} 20 ${i % 2 ? -2 : 3} 52" dur="${d}s" begin="${i * 1.1}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.7;0.5;0" dur="${d}s" begin="${i * 1.1}s" repeatCount="indefinite"/></rect>`
+    const d = +(dur / (i % 2 ? 2 : 3)).toFixed(4)
+    const b = (-i * 1.1).toFixed(1)
+    s += `<rect x="${x * Q}" y="${8 * Q}" width="${Q / 2}" height="${Q / 2}" fill="#fff6d8" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 6 : -6} 20 ${i % 2 ? -2 : 3} 52" dur="${d}s" begin="${b}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.7;0.5;0" dur="${d}s" begin="${b}s" repeatCount="indefinite"/></rect>`
   }
 
   // ---- the chain rail and chains ----
@@ -157,9 +171,10 @@ function chainOfCommandHD() {
   s += rail.svg()
   // three slow jolts against the chains; the chains swing and settle
   const jolts: [number, number][] = [[10.5, 10.95], [11.3, 11.75], [12.1, 12.55]]
-  const swayK = [0, 10.5, 10.95, 11.3, 11.75, 12.1, 12.55, 13.1, 13.7, 14.3, dur]
-  const swayV = ['0 0', '0 0', `${Q / 2} 0`, `${-Q / 2} 0`, `${Q / 2} 0`, `${-Q / 2} 0`, `${Q / 2} 0`, `${-Q / 2} 0`, `${Q / 2} 0`, '0 0', '0 0']
-  const sway = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${swayV.join(';')}" keyTimes="${kt(swayK)}"/>`
+  // the chains swing smoothly from side to side with each jolt, then settle
+  const swayK = [10.5, 10.95, 11.3, 11.75, 12.1, 12.55, 13.1, 13.7, 14.3]
+  const swayX = [0, 1, -1, 1, -1, 1, -1, 1, 0]
+  const sway = cocTween(swayK.map((t, i) => [t, (swayX[i] * Q) / 2, 0] as [number, number, number]), COC_SWING)
   s += `<g>${cocChain(px - 3, 11, py - 3)}${cocChain(px + 19, 11, py - 3)}${sway}</g>`
 
   // shadow under the suspended prisoner
@@ -198,60 +213,75 @@ function chainOfCommandHD() {
     p.set(edge, my + 6, '#8a8868').set(edge, my + 8, '#6a6850')
   }
   // facing away (left) at the start and the end, toward Picard (right) in between
-  const awayOn: [number, number][] = [[0, 2.4], [13.6, dur]]
-  const towardOn: [number, number][] = [[2.4, 13.6]]
+  // the turn passes through a front-facing in-between (eyes centred) for 0.1 s each way
+  const awayOn: [number, number][] = [[0, 2.35], [13.65, dur]]
+  const turnOn: [number, number][] = [[2.35, 2.45], [13.55, 13.65]]
+  const towardOn: [number, number][] = [[2.45, 13.55]]
   const raised: [number, number][] = [[5.1, 12.8]]
-  const madAway = crabHD(M, mx, my, 'left', dur, { left: [], right: [] }, [], 6.2, madredDetails('left'))
-  const madToward = crabHD(M, mx, my, 'right', dur, { left: [], right: raised }, [], 6.2, madredDetails('right'))
+  const blink = +(dur / 3).toFixed(4)
+  const madAway = crabHD(M, mx, my, 'left', dur, { left: [], right: [] }, [], blink, madredDetails('left'))
+  const madToward = crabHD(M, mx, my, 'right', dur, { left: [], right: raised }, [], blink, madredDetails('right'))
+  const front = clawdBody(M, mx, my, 'left').p
+  for (const e of [4, 10]) front.rect(mx + e, my + 2, 2, 3, M.skin)
+  for (const e of [5, 11]) front.rect(mx + e, my + 2, 2, 3, EYE_HD)
+  madredDetails('left')(front)
+  front.rect(mx + 17, my + 1, 1, 5, M.skin)
+  const madFront = front.svg() + armRestHD(M, mx, my, 'left') + armRestHD(M, mx, my, 'right')
   // the claw on its way up and on its way down: reaching out toward the lights
   const mid = new Pix()
   for (let i = 0; i < 4; i++) mid.rect(mx + 20 + i, my + 3 - i, 2, 1, M.skin).set(mx + 20 + i, my + 4 - i, M.shade)
   mid.rect(mx + 23, my - 3, 1, 2, M.skin).rect(mx + 26, my - 3, 1, 2, M.skin).rect(mx + 23, my - 1, 4, 1, M.skin).set(mx + 23, my - 3, M.light).set(mx + 26, my - 3, M.light)
-  let mad = shown(madAway, awayOn, dur) + shown(madToward, towardOn, dur)
+  let mad = shown(madAway, awayOn, dur) + shown(madFront, turnOn, dur) + shown(madToward, towardOn, dur)
   mad += shown(mid.svg(), [[4.75, 5.1], [12.8, 13.25]], dur)
-  // the walk: a few unhurried steps in, later the same steps back out
-  const walk: [number, number, number][] = [[0, -6, 0]]
-  for (let k = 0; k < 6; k++) {
-    const t = 2.8 + k * 0.3
-    walk.push([t, -5 + k, -1], [t + 0.15, -5 + k, 0])
+  // the walk: an unhurried glide in, later the same glide back out, with a soft
+  // bob on each of the six steps (the bob rides inside the glide)
+  const glide = cocTween([[0, -6 * Q, 0], [2.7, -6 * Q, 0], [4.45, 0, 0], [13.9, 0, 0], [15.65, -6 * Q, 0]], '0.42 0 0.58 1')
+  const bobK: [number, number, number][] = [[0, 0, 0]]
+  for (const t0 of [2.8, 14.0]) {
+    for (let k = 0; k < 6; k++) {
+      const t = t0 + k * 0.3
+      bobK.push([t, 0, 0], [t + 0.08, 0, -Q], [t + 0.2, 0, 0])
+    }
   }
-  for (let k = 0; k < 6; k++) {
-    const t = 14.0 + k * 0.3
-    walk.push([t, -1 - k, -1], [t + 0.15, -1 - k, 0])
-  }
-  const walkAnim = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${walk.map(([, x, y]) => `${x * Q} ${y * Q}`).join(';')}" keyTimes="${kt(walk.map(w => w[0]))}"/>`
-  s += `<g>${mad}${walkAnim}</g>`
+  s += `<g>${glide}<g>${mad}${cocTween(bobK)}</g></g>`
 
-  // ---- Picard: hung by the wrists ----
+  // ---- Picard: hung by the wrists (both claws up for the whole story) ----
   const P = COC_PICARD
-  let pic = crabHD(
-    P, px, py, 'left', dur,
-    { left: [[0, dur]], right: [[0, dur]] },
-    [],
-    4.3,
-    p => {
-      // rumpled uniform: a torn seam and a crease
-      p.set(px + 13, py + 8, '#7a161c').set(px + 14, py + 9, '#7a161c').set(px + 5, py + 8, '#c94048')
-      // grey fringe of hair at the temples
-      p.rect(px, py + 2, 1, 2, '#8e8a86').rect(px + 17, py + 2, 1, 2, '#b4b0aa')
-      // furrowed brow
-      p.rect(px + 3, py + 1, 4, 1, P.shade).rect(px + 9, py + 1, 4, 1, P.shade)
-    },
-  )
-  // exhausted: heavy, half-closed eyelids (again while he hesitates)
+  const pb = clawdBody(P, px, py, 'left')
+  // rumpled uniform: a torn seam and a crease
+  pb.p.set(px + 13, py + 8, '#7a161c').set(px + 14, py + 9, '#7a161c').set(px + 5, py + 8, '#c94048')
+  // grey fringe of hair at the temples
+  pb.p.rect(px, py + 2, 1, 2, '#8e8a86').rect(px + 17, py + 2, 1, 2, '#b4b0aa')
+  // furrowed brow
+  pb.p.rect(px + 3, py + 1, 4, 1, P.shade).rect(px + 9, py + 1, 4, 1, P.shade)
+  let pic = pb.p.svg() + armUpHD(P, px, py, 'left') + armUpHD(P, px, py, 'right')
+  const blinkLids = new Pix()
+  for (const e of pb.ex) blinkLids.rect(px + e, py + 2, 2, 3, P.skin)
+  pic += `<g opacity="0">${blinkLids.svg()}<animate attributeName="opacity" calcMode="discrete" dur="${+(dur / 4).toFixed(4)}s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.92;0.95"/></g>`
+  // exhausted: heavy, half-closed eyelids; they lift and drop through a lighter lid.
+  // He sinks back into them after the shouting, so the end matches the start.
   const lids = new Pix()
   for (const e of [4, 10]) lids.rect(px + e, py + 2, 2, 2, P.shade).rect(px + e, py + 2, 2, 1, P.skin)
-  pic += shown(lids.svg(), [[0, 4.9], [9.7, 10.3]], dur)
-  // he looks up and right at the fifth light
+  const lidsLight = new Pix()
+  for (const e of [4, 10]) lidsLight.rect(px + e, py + 2, 2, 1, P.shade)
+  pic += shown(lids.svg(), [[0, 4.75], [9.8, 10.2], [16.45, dur]], dur)
+  pic += shown(lidsLight.svg(), [[4.75, 4.9], [9.7, 9.8], [10.2, 10.3], [16.3, 16.45]], dur)
+  // he looks up and right at the fifth light, his eyes travelling there and back
   const glance = new Pix()
   for (const e of [4, 10]) glance.rect(px + e, py + 2, 2, 3, P.skin)
   for (const e of [6, 12]) glance.rect(px + e, py + 1, 2, 3, EYE_HD)
-  pic += shown(glance.svg(), [[8.0, 9.7]], dur)
-  // defiance: brows drawn down hard
+  const glanceMid = new Pix()
+  for (const e of [4, 10]) glanceMid.rect(px + e, py + 2, 2, 3, P.skin)
+  for (const e of [5, 11]) glanceMid.rect(px + e, py + 2, 2, 3, EYE_HD)
+  pic += shown(glanceMid.svg(), [[7.9, 8.0], [9.6, 9.7]], dur)
+  pic += shown(glance.svg(), [[8.0, 9.6]], dur)
+  // defiance: brows drawn down hard (through a half-drawn brow each way)
   const brows = new Pix()
   brows.set(px + 3, py + 1, P.shade).rect(px + 5, py + 1, 2, 1, '#6e2f20').set(px + 7, py + 2, '#6e2f20')
   brows.set(px + 9, py + 2, '#6e2f20').rect(px + 10, py + 1, 2, 1, '#6e2f20').set(px + 13, py + 1, P.shade)
-  pic += shown(brows.svg(), [[10.3, dur]], dur)
+  const browsMid = new Pix().rect(px + 5, py + 1, 2, 1, '#6e2f20').rect(px + 10, py + 1, 2, 1, '#6e2f20')
+  pic += shown(browsMid.svg(), [[10.3, 10.4], [16.0, 16.15]], dur)
+  pic += shown(brows.svg(), [[10.4, 16.0]], dur)
   // iron manacles at both wrists
   const cuffs = new Pix()
   for (const ax of [px - 3, px + 19]) {
@@ -259,17 +289,22 @@ function chainOfCommandHD() {
   }
   pic += cuffs.svg()
   // sweat running down his head
-  pic += `<rect x="${(px + 15) * Q}" y="${(py + 1) * Q}" width="${Q}" height="${Q}" fill="#cfe4ff" opacity="0"><animate attributeName="y" values="${(py + 1) * Q};${(py + 5) * Q}" dur="2.5s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.9;0.9;0" keyTimes="0;0.1;0.8;1" dur="2.5s" repeatCount="indefinite"/></rect>`
-  // the shout: mouth wide open, a few strokes of sound
-  const shout = new Pix().rect(px + 6, py + 4, 4, 2, '#3a0f16').rect(px + 7, py + 5, 2, 1, '#8e2a32')
-  for (const [sx, sy] of [[px - 7, py + 1], [px - 8, py + 4], [px - 7, py + 7]] as [number, number][]) shout.rect(sx, sy, 2, 1, '#e8d8b8')
-  pic += shown(shout.svg(), [[10.5, 12.7]], dur)
-  // body: sagging until he gathers himself, then three jolts upward
-  const bodyK = [0, 10.3]
-  const bodyV = [`0 ${Q}`, '0 0']
-  for (const [a, b] of jolts) bodyK.push(a, b), bodyV.push(`0 ${-Q}`, '0 0')
-  const bodyAnim = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${bodyV.join(';')}" keyTimes="${kt(bodyK)}"/>`
-  s += `<g>${pic}${bodyAnim}</g>`
+  const sw = +(dur / 7).toFixed(4)
+  pic += `<rect x="${(px + 15) * Q}" y="${(py + 1) * Q}" width="${Q}" height="${Q}" fill="#cfe4ff" opacity="0"><animate attributeName="y" values="${(py + 1) * Q};${(py + 5) * Q}" calcMode="spline" keyTimes="0;1" keySplines="0.5 0 0.9 0.6" dur="${sw}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.9;0.9;0" keyTimes="0;0.1;0.8;1" dur="${sw}s" repeatCount="indefinite"/></rect>`
+  // the shout: the mouth opens through a small 'o', a few strokes of sound fade in and out
+  const mouthMid = new Pix().rect(px + 7, py + 5, 2, 1, '#3a0f16')
+  const mouth = new Pix().rect(px + 6, py + 4, 4, 2, '#3a0f16').rect(px + 7, py + 5, 2, 1, '#8e2a32')
+  pic += shown(mouthMid.svg(), [[10.5, 10.6], [12.6, 12.7]], dur)
+  pic += shown(mouth.svg(), [[10.6, 12.6]], dur)
+  const strokes = new Pix()
+  for (const [sx, sy] of [[px - 7, py + 1], [px - 8, py + 4], [px - 7, py + 7]] as [number, number][]) strokes.rect(sx, sy, 2, 1, '#e8d8b8')
+  pic += `<g opacity="0">${strokes.svg()}<animate attributeName="opacity" dur="${dur}s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="${kt([0, 10.5, 10.75, 12.5, 12.8, dur])}"/>${cocTween([[10.5, 0, 0], [12.8, -Q, 0]], '0.3 0.3 0.7 0.7')}</g>`
+  // body: sagging until he gathers himself, three jolts upward against the
+  // chains (each one rising and dropping over ~0.15 s), then slowly sagging again
+  const bodyK: [number, number, number][] = [[0, 0, Q], [10.0, 0, Q], [10.3, 0, 0]]
+  for (const [a, b] of jolts) bodyK.push([a, 0, 0], [a + 0.14, 0, -Q], [b - 0.06, 0, -Q], [b + 0.1, 0, 0])
+  bodyK.push([15.9, 0, 0], [16.7, 0, Q])
+  s += `<g>${pic}${cocTween(bodyK)}</g>`
 
   return s
 }

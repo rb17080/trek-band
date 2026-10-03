@@ -96,14 +96,21 @@ function merge(list: [number, number][]): [number, number][] {
 
 const shown = (svg: string, on: [number, number][], dur: number) => `<g>${svg}${windows(merge(on), dur)}</g>`
 
+// A hop rises over ~0.14 s (easing out), holds, and lands over ~0.14 s (easing in)
+const EASE_OUT = '0.2 0.7 0.4 1'
+const EASE_IN = '0.6 0 0.8 0.3'
+const HOLD = '0 0 1 1'
 function hopQ(on: [number, number][], dur: number) {
-  const times = [0]
-  const vals = ['0 0']
-  for (const [a, b] of on) {
-    times.push(a / dur), vals.push(`0 ${-2 * Q}`)
-    times.push(b / dur), vals.push('0 0')
+  const pts: [number, number, string][] = [[0, 0, HOLD]] // time, y, spline into this point
+  for (const [a, b] of merge(on)) {
+    const r = Math.min(0.14, (b - a) / 3)
+    const t0 = Math.max(a - r / 2, pts[pts.length - 1][0] + 0.001)
+    pts.push([t0, 0, HOLD], [t0 + r, -2 * Q, EASE_OUT], [Math.max(b - r / 2, t0 + r + 0.001), -2 * Q, HOLD])
+    pts.push([Math.min(b + r / 2, dur), 0, EASE_IN])
   }
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${times.map(t => +t.toFixed(4)).join(';')}"/>`
+  if (pts[pts.length - 1][0] < dur) pts.push([dur, 0, HOLD])
+  const times = pts.map(([t]) => +(t / dur).toFixed(5))
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${dur}s" repeatCount="indefinite" values="${pts.map(([, y]) => `0 ${y}`).join(';')}" keyTimes="${times.join(';')}" keySplines="${pts.slice(1).map(([, , sp]) => sp).join(';')}"/>`
 }
 
 type Side = 'left' | 'right'
@@ -159,6 +166,33 @@ function armUpHD(k: CrabHD, x: number, y: number, side: Side) {
   return p.svg()
 }
 
+// Half-raised: the arm on a diagonal, between rest and up
+function armMidHD(k: CrabHD, x: number, y: number, side: Side) {
+  const p = new Pix()
+  const d = side === 'left' ? -1 : 1
+  const sx = side === 'left' ? x - 3 : x + 18
+  p.rect(sx, y + 4, 3, 2, k.skin)
+  for (let i = 0; i < 4; i++) p.rect(sx + (side === 'left' ? -i : 1 + i), y + 2 - i, 2, 2, k.skin)
+  const cx = side === 'left' ? x - 8 : x + 21
+  p.rect(cx, y - 3, 1, 2, k.skin).rect(cx + 3, y - 3, 1, 2, k.skin).rect(cx, y - 1, 4, 1, k.skin)
+  p.set(cx, y - 3, k.light).set(cx + 3, y - 3, k.light)
+  void d
+  return p.svg()
+}
+
+// Each raised window split into rest -> half (0.09 s) -> up -> half (0.09 s) -> rest
+const ARM_STEP = 0.09
+function armPhases(on: [number, number][]) {
+  const up: [number, number][] = []
+  const mid: [number, number][] = []
+  for (const [a, b] of merge(on)) {
+    const st = Math.min(ARM_STEP, (b - a) / 3)
+    mid.push([a, a + st], [b - st, b])
+    up.push([a + st, b - st])
+  }
+  return { up, mid }
+}
+
 type Pose = { left: [number, number][]; right: [number, number][] }
 
 function crabHD(
@@ -177,8 +211,12 @@ function crabHD(
   let s = p.svg()
   s += shown(armRestHD(k, x, y, 'left'), complement(merge(pose.left), dur), dur)
   s += shown(armRestHD(k, x, y, 'right'), complement(merge(pose.right), dur), dur)
-  if (pose.left.length) s += shown(armUpHD(k, x, y, 'left'), pose.left, dur)
-  if (pose.right.length) s += shown(armUpHD(k, x, y, 'right'), pose.right, dur)
+  for (const side of ['left', 'right'] as const) {
+    if (!pose[side].length) continue
+    const { up, mid } = armPhases(pose[side])
+    s += shown(armMidHD(k, x, y, side), mid, dur)
+    s += shown(armUpHD(k, x, y, side), up, dur)
+  }
   const lids = new Pix()
   ex.forEach(e => lids.rect(x + e, y + 2, 2, 3, k.skin))
   s += `<g opacity="0">${lids.svg()}<animate attributeName="opacity" calcMode="discrete" dur="${blinkEvery}s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.92;0.95"/></g>`

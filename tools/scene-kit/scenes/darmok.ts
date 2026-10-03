@@ -6,19 +6,77 @@
 // a 1 px rise, and blinks placed by hand.
 type DkArms = { half: [number, number][]; up: [number, number][] }
 
-function dkArmHalf(k: CrabHD, x: number, y: number, side: Side) {
-  const p = new Pix()
+// A raised arm, fully up (the same art as armUpHD), split into the shoulder that stays put
+// and the arm + claw that slide: lowered 4 px it is the half-raise.
+function dkArmV(k: CrabHD, x: number, y: number, side: Side) {
   const ax = side === 'left' ? x - 3 : x + 19
-  p.rect(side === 'left' ? x - 3 : x + 18, y + 4, 3, 2, k.skin)
-  p.rect(ax, y, 2, 4, k.skin)
-  p.rect(side === 'left' ? ax : ax + 1, y, 1, 4, k.shade)
+  const shoulder = new Pix().rect(side === 'left' ? x - 3 : x + 18, y + 4, 3, 2, k.skin).svg()
+  const p = new Pix()
+  p.rect(ax, y - 4, 2, 8, k.skin)
+  p.rect(side === 'left' ? ax : ax + 1, y - 4, 1, 8, k.shade)
   const cx = side === 'left' ? x - 4 : x + 18
-  p.rect(cx, y - 4, 1, 3, k.skin).rect(cx + 3, y - 4, 1, 3, k.skin)
-  p.rect(cx, y - 2, 4, 1, k.skin).rect(cx + 1, y - 1, 2, 1, k.skin)
-  p.set(cx, y - 4, k.light).set(cx + 3, y - 4, k.light)
-  return p.svg()
+  const cy = y - 8
+  p.rect(cx, cy, 1, 3, k.skin).rect(cx + 3, cy, 1, 3, k.skin)
+  p.rect(cx, cy + 2, 4, 1, k.skin).rect(cx + 1, cy + 3, 2, 1, k.skin)
+  p.set(cx, cy, k.light).set(cx + 3, cy, k.light)
+  return { shoulder, arm: p.svg(), clip: [cx - 1, y + 4] }
 }
 
+// The arm moves toward where the story wants it, one stage every DK_STEP s:
+// 0 rest, 1 diagonal, 2 half-raised, 3-6 sliding up one px per stage (6 = fully up).
+// Rest, diagonal and raised are drawings; from half to fully up the arm glides.
+const DK_STEP = 0.08
+function dkArmPlan(a: DkArms, T: number) {
+  const inside = (w: [number, number][], t: number) => w.some(([t0, t1]) => t >= t0 && t < t1)
+  const target = (t: number) => (inside(a.up, t) ? 6 : inside(a.half, t) ? 2 : 0)
+  const times = [...a.half, ...a.up].flat().sort((p, q) => p - q)
+  const steps: [number, number, number][] = [] // time, from, to
+  let lvl = 0
+  let t = 0
+  while (t < T) {
+    const want = target(t)
+    if (want === lvl) {
+      const next = times.find(x => x > t + 1e-9)
+      if (next === undefined) break
+      t = next
+      continue
+    }
+    const to = lvl + (want > lvl ? 1 : -1)
+    steps.push([t, lvl, to])
+    lvl = to
+    t = +(t + DK_STEP).toFixed(4)
+  }
+  // which drawing is up: 0 rest, 1 diagonal, 2 raised
+  const show: [number, number][][] = [[], [], []]
+  let from = 0
+  let cur = 0
+  for (const [t0, , to] of steps) {
+    const d = Math.min(to, 2)
+    if (d !== cur) {
+      show[cur].push([from, t0])
+      from = t0
+      cur = d
+    }
+  }
+  show[cur].push([from, T])
+  // the glide: 4 px down at half, 0 at fully up, eased at the start and end of each run
+  const pts: [number, number, string][] = [[0, 4, '']]
+  const moves = steps.filter(([, f, to]) => f >= 2 && to >= 2)
+  moves.forEach(([t0, f, to], i) => {
+    const prev = moves[i - 1]
+    const next = moves[i + 1]
+    const first = !prev || Math.abs(prev[0] + DK_STEP - t0) > 1e-6 || Math.sign(prev[2] - prev[1]) !== Math.sign(to - f)
+    const last = !next || Math.abs(t0 + DK_STEP - next[0]) > 1e-6 || Math.sign(next[2] - next[1]) !== Math.sign(to - f)
+    const sp = first && last ? '0.4 0 0.6 1' : first ? '0.5 0 1 1' : last ? '0 0 0.5 1' : '0 0 1 1'
+    if (first) pts.push([t0, 6 - f, '0 0 1 1'])
+    pts.push([t0 + DK_STEP, 6 - to, sp])
+  })
+  pts.push([T, 4, '0 0 1 1'])
+  const glide = `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${T}s" repeatCount="indefinite" values="${pts.map(p => `0 ${p[1] * Q}`).join(';')}" keyTimes="${pts.map(p => +(p[0] / T).toFixed(5)).join(';')}" keySplines="${pts.slice(1).map(p => p[2]).join(';')}"/>`
+  return { show, glide }
+}
+
+let dkClipN = 0
 function dkCrab(
   k: CrabHD, x: number, y: number, look: Side,
   arms: { left: DkArms; right: DkArms },
@@ -33,10 +91,15 @@ function dkCrab(
   details(p)
   let s = p.svg()
   for (const side of ['left', 'right'] as Side[]) {
-    const a = arms[side]
-    s += shown(armRestHD(k, x, y, side), complement(merge([...a.half, ...a.up]), T), T)
-    if (a.half.length) s += shown(dkArmHalf(k, x, y, side), a.half, T)
-    if (a.up.length) s += shown(armUpHD(k, x, y, side), a.up, T)
+    const plan = dkArmPlan(arms[side], T)
+    s += shown(armRestHD(k, x, y, side), plan.show[0], T)
+    if (plan.show[1].length) s += shown(armMidHD(k, x, y, side), plan.show[1], T)
+    if (plan.show[2].length) {
+      const v = dkArmV(k, x, y, side)
+      const id = `dkClip${dkClipN++}`
+      s += `<clipPath id="${id}"><rect x="${v.clip[0] * Q}" y="0" width="${6 * Q}" height="${v.clip[1] * Q}"/></clipPath>`
+      s += shown(`${v.shoulder}<g clip-path="url(#${id})"><g>${v.arm}${plan.glide}</g></g>`, plan.show[2], T)
+    }
   }
   const eyes = (dy: number) => {
     const e = new Pix()
@@ -58,6 +121,7 @@ function dkCrab(
 }
 
 function darmok() {
+  dkClipN = 0
   const T0 = SCENE_SECONDS
   const W = GW * Q
   const H = GH * Q
@@ -82,10 +146,11 @@ function darmok() {
     }
   }
   ;[[30, 4], [46, 2], [58, 11], [20, 14], [86, 18]].forEach(([x, y], i) => {
+    const tw = (T0 / [7, 5, 4, 4, 3][i]).toFixed(4)
     const glow = new Pix()
     glow.set(x - 1, y, '#bfa8ee').set(x + 1, y, '#bfa8ee').set(x, y - 1, '#bfa8ee').set(x, y + 1, '#bfa8ee')
-    back += `<g>${glow.svg()}<animate attributeName="opacity" values="0.15;0.9;0.15" dur="${2.6 + i * 0.7}s" begin="${i * 0.6}s" repeatCount="indefinite"/></g>`
-    back += `<g>${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0.6;1;0.6" dur="${2.6 + i * 0.7}s" begin="${i * 0.6}s" repeatCount="indefinite"/></g>`
+    back += `<g>${glow.svg()}<animate attributeName="opacity" values="0.15;0.9;0.15" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" dur="${tw}s" begin="${-i * 0.6}s" repeatCount="indefinite"/></g>`
+    back += `<g>${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0.6;1;0.6" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" dur="${tw}s" begin="${-i * 0.6}s" repeatCount="indefinite"/></g>`
   })
   // shooting star: crosses once, after the two understand each other
   {
@@ -130,12 +195,12 @@ function darmok() {
   s += `<g mask="url(#dkFade)">${back}</g>`
 
   // firelight on the ground and the two of them
-  s += `<ellipse cx="${51 * Q}" cy="${40 * Q}" rx="84" ry="30" fill="url(#dkGlow)"><animate attributeName="opacity" values="0.9;0.97;0.92;1;0.9" dur="4.3s" calcMode="spline" keyTimes="0;0.3;0.5;0.8;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1" repeatCount="indefinite"/></ellipse>`
+  s += `<ellipse cx="${51 * Q}" cy="${40 * Q}" rx="84" ry="30" fill="url(#dkGlow)"><animate attributeName="opacity" values="0.9;0.97;0.92;1;0.9" dur="${(T0 / 4).toFixed(4)}s" calcMode="spline" keyTimes="0;0.3;0.5;0.8;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1" repeatCount="indefinite"/></ellipse>`
 
   // smoke curling up from the fire
   for (let i = 0; i < 3; i++) {
-    const d = 4.5 + i
-    s += `<rect x="${50 * Q}" y="${23 * Q}" width="${3 * Q}" height="${2 * Q}" fill="#8a7fa0" opacity="0"><animateMotion path="M0 0 q 6 -12 2 -22 t 8 -22" dur="${d}s" begin="${i * 1.5}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.35;0" dur="${d}s" begin="${i * 1.5}s" repeatCount="indefinite"/></rect>`
+    const d = (T0 / [4, 3, 3][i]).toFixed(4)
+    s += `<rect x="${50 * Q}" y="${23 * Q}" width="${3 * Q}" height="${2 * Q}" fill="#8a7fa0" opacity="0"><animateMotion path="M0 0 q 6 -12 2 -22 t 8 -22" dur="${d}s" begin="${-i * 1.9}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.35;0" dur="${d}s" begin="${-i * 1.9}s" repeatCount="indefinite"/></rect>`
   }
 
   // stones and crossed logs
@@ -159,13 +224,33 @@ function darmok() {
     ['.....y......', '.....y......', '.....yy.....', '....oyy.....', '....oyyo.y..', '...ooywo.o..', '...oywwyoo..', '..ooywwyyo..', '.roooywwyoo.', '.rooyywwyyor', 'rrooyywwyoor', '.rroooyyoorr', '.RrrrooooorR', '..RRRrrrrRR.'],
     ['.......y....', '......yy....', '......oy.y..', '.....ooy.y..', '....ooyyo...', '.o..ooyyoo..', '.o.ooywyoo..', '..ooyywwyoo.', '.ooyywwwyyo.', 'rooyywwwyyor', 'roooywwyyoor', 'rrooyyyyoorr', 'RrrooooooorR', '.RRrrrrrrRR.'],
   ]
-  frames.forEach((f, i) => {
-    s += shown(new Pix().rows(f, 45, 25, pal).svg(), [[i * 0.16, (i + 1) * 0.16]], 0.64)
-  })
+  // each drawing melts into the next: the incoming one fades in on top, then the one
+  // beneath fades away, so the fire never thins. The first drawing is repeated on top
+  // to close the loop, and the loop divides the story so the restart is seamless.
+  {
+    const FD = T0 / 17 // ~1.01 s for all four drawings
+    const S = FD / 4
+    const F = 0.11
+    const k = (t: number) => +(t / FD).toFixed(4)
+    const ease = '0.4 0 0.6 1'
+    const op = (vals: number[], ts: number[]) =>
+      `<animate attributeName="opacity" calcMode="spline" dur="${FD.toFixed(4)}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${ts.map(k).join(';')}" keySplines="${vals.slice(1).map(() => ease).join(';')}"/>`
+    const art = (i: number) => new Pix().rows(frames[i], 45, 25, pal).svg()
+    // drawing 0 at the bottom: full at the start, fades once drawing 1 is in
+    s += `<g>${`<g id="dkFl0">${art(0)}</g>`}${op([1, 1, 0, 0], [0, S, S + F, FD])}</g>`
+    for (let i = 1; i < 4; i++) {
+      const a = i * S
+      const b = (i + 1) * S
+      if (i < 3) s += `<g opacity="0">${art(i)}${op([0, 0, 1, 1, 0, 0], [0, a - F, a, b, b + F, FD])}</g>`
+      else s += `<g opacity="0">${art(i)}${op([1, 0, 0, 1, 1], [0, F, a - F, a, FD])}</g>`
+    }
+    // drawing 0 again on top, fading in at the end of the loop and away just after its start
+    s += `<g opacity="0"><use href="#dkFl0"/>${op([1, 0, 0, 1], [0, F, FD - F, FD])}</g>`
+  }
   // embers
   for (let i = 0; i < 5; i++) {
-    const d = 2 + i * 0.45
-    s += `<rect x="${51 * Q}" y="${25 * Q}" width="${Q}" height="${Q}" fill="${i % 2 ? '#ffd36b' : '#ff9a4a'}" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 8 : -8} -14 ${i % 2 ? -3 : 4} -28 t ${i % 2 ? 6 : -6} -18" dur="${d}s" begin="${i * 0.5}s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;0.8;0" dur="${d}s" begin="${i * 0.5}s" repeatCount="indefinite"/></rect>`
+    const d = (T0 / [9, 7, 6, 5, 4][i]).toFixed(4)
+    s += `<rect x="${51 * Q}" y="${25 * Q}" width="${Q}" height="${Q}" fill="${i % 2 ? '#ffd36b' : '#ff9a4a'}" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 8 : -8} -14 ${i % 2 ? -3 : 4} -28 t ${i % 2 ? 6 : -6} -18" dur="${d}s" begin="${-i * 0.5}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;1;0.8;0" keyTimes="0;0.08;0.5;1" dur="${d}s" begin="${-i * 0.5}s" repeatCount="indefinite"/></rect>`
   }
 
   // Dathon, Tamarian ridges and robe, a dagger at his belt

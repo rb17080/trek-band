@@ -9,9 +9,10 @@
 // 13.2 - 17.17 he raises the flute and plays again, softly.
 
 const INL_DUR = SCENE_SECONDS
-const INL_PLAY: [number, number][] = [[0, 6.0], [13.8, SCENE_SECONDS]]
-const INL_MOVE: [number, number][] = [[6.0, 6.6], [13.2, 13.8]] // flute half-way
-const INL_REST: [number, number][] = [[6.6, 13.2]]
+const INL_PLAY: [number, number][] = [[0, 6.05], [13.75, SCENE_SECONDS]]
+const INL_REST: [number, number][] = [[6.55, 13.25]]
+// lowering (6.05 - 6.55) and raising (13.25 - 13.75) the flute: five drawings, 0.1 s each
+const INL_TILT = (k: number): [number, number][] => [[6.05 + (k - 1) * 0.1, 6.05 + k * 0.1], [13.75 - k * 0.1, 13.75 - (k - 1) * 0.1]]
 
 // value of a piecewise-linear curve at time t (held flat beyond its ends)
 function inlAt(pts: [number, number][], t: number) {
@@ -31,14 +32,29 @@ function inlFade(pts: [number, number][], dur: number) {
   const vals = ts.map(t => +inlAt(pts, t).toFixed(3))
   return `<animate attributeName="opacity" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${ts.map(t => +(t / dur).toFixed(4)).join(';')}"/>`
 }
-// a stepped move (whole art px) on the story timeline; points may start before 0
-function inlPath(pts: [number, number, number][], dur: number) {
-  let first = pts[0]
-  for (const p of pts) if (p[0] <= 0) first = p
-  const keep = pts.filter(p => p[0] > 0 && p[0] < dur)
-  const list: [number, number, number][] = [[0, first[1], first[2]], ...keep]
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${list.map(l => `${l[1] * Q} ${l[2] * Q}`).join(';')}" keyTimes="${list.map(l => +(l[0] / dur).toFixed(4)).join(';')}"/>`
+// a smooth move on the story timeline (art px), eased between points; points may lie
+// outside 0..dur, the curve is cut at both ends. Each point: [t, x, y, spline into it]
+function inlGlide(pts: [number, number, number, string?][], dur: number) {
+  const at = (t: number): [number, number] => {
+    if (t <= pts[0][0]) return [pts[0][1], pts[0][2]]
+    for (let i = 1; i < pts.length; i++) {
+      const [b, bx, by] = pts[i]
+      if (t <= b) {
+        const [a, ax, ay] = pts[i - 1]
+        const f = (t - a) / (b - a)
+        return [ax + (bx - ax) * f, ay + (by - ay) * f]
+      }
+    }
+    const l = pts[pts.length - 1]
+    return [l[1], l[2]]
+  }
+  const list: [number, number, number, string][] = [[0, ...at(0), '']]
+  for (const p of pts) if (p[0] > 0 && p[0] < dur) list.push([p[0], p[1], p[2], p[3] || '0 0 1 1'])
+  list.push([dur, ...at(dur), '0 0 1 1'])
+  const v = (n: number) => +(n * Q).toFixed(2)
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${dur}s" repeatCount="indefinite" values="${list.map(l => `${v(l[1])} ${v(l[2])}`).join(';')}" keyTimes="${list.map(l => +(l[0] / dur).toFixed(4)).join(';')}" keySplines="${list.slice(1).map(l => l[3]).join(';')}"/>`
 }
+const INL_EASE = '0.4 0 0.6 1'
 
 function inlHex(h: string) {
   const n = parseInt(h.slice(1), 16)
@@ -134,13 +150,14 @@ function innerLightHD() {
     back += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#e9dcff" opacity="${(0.15 + rnd() * 0.3 * (1 - y / 14)).toFixed(2)}"/>`
   }
   ;[[24, 3], [41, 6], [70, 2], [84, 7], [33, 10]].forEach(([x, y], i) => {
+    const tw = (dur / [5, 4, 4, 3, 3][i]).toFixed(4)
     const g = new Pix().set(x - 1, y, '#bba6ee').set(x + 1, y, '#bba6ee').set(x, y - 1, '#bba6ee').set(x, y + 1, '#bba6ee')
-    back += `<g>${g.svg()}<animate attributeName="opacity" values="0.15;0.6;0.15" dur="${3.6 + i * 0.7}s" begin="${i * 0.7}s" repeatCount="indefinite"/></g>`
-    back += `<g>${new Pix().set(x, y, '#fff8ee').svg()}<animate attributeName="opacity" values="0.6;1;0.6" dur="${3.6 + i * 0.7}s" begin="${i * 0.7}s" repeatCount="indefinite"/></g>`
+    back += `<g>${g.svg()}<animate attributeName="opacity" values="0.15;0.6;0.15" dur="${tw}s" begin="${-i * 0.7}s" repeatCount="indefinite"/></g>`
+    back += `<g>${new Pix().set(x, y, '#fff8ee').svg()}<animate attributeName="opacity" values="0.6;1;0.6" dur="${tw}s" begin="${-i * 0.7}s" repeatCount="indefinite"/></g>`
   })
 
   // the sun, low and large, sinking a little over the whole scene
-  let sunG = `<circle cx="${(SUNX + 0.5) * Q}" cy="${(SUNY + 0.5) * Q}" r="62" fill="url(#inlHalo)"><animate attributeName="r" values="61;64;61" dur="11s" repeatCount="indefinite"/></circle>`
+  let sunG = `<circle cx="${(SUNX + 0.5) * Q}" cy="${(SUNY + 0.5) * Q}" r="62" fill="url(#inlHalo)"><animate attributeName="r" values="61;64;61" dur="${(dur / 2).toFixed(4)}s" repeatCount="indefinite"/></circle>`
   const sun = new Pix()
   const R = 10
   for (let y = -R; y <= R; y++) {
@@ -157,9 +174,9 @@ function innerLightHD() {
     for (let x = -R; x <= R; x++) if (x * x + yy * yy <= R * R) sun.set(SUNX + x, SUNY + yy, inlMix('#ffb460', '#d86a4a', a))
   }
   sunG += sun.svg()
-  back += `<g>${sunG}<animateTransform attributeName="transform" type="translate" values="0 0;0 ${4 * Q}" dur="${dur}s" repeatCount="indefinite"/></g>`
+  back += `<g>${sunG}${inlGlide([[0, 0, 0], [13.2, 0, 3, INL_EASE], [dur, 0, 0, INL_EASE]], dur)}</g>`
   // the evening deepening, very slowly
-  back += `<rect width="${W}" height="${34 * Q}" fill="#1d1636" opacity="0"><animate attributeName="opacity" values="0;0.14" dur="${dur}s" repeatCount="indefinite"/></rect>`
+  back += `<rect width="${W}" height="${34 * Q}" fill="#1d1636" opacity="0"><animate attributeName="opacity" values="0;0.14;0" keyTimes="0;${(13.2 / dur).toFixed(4)};1" calcMode="spline" keySplines="${INL_EASE};${INL_EASE}" dur="${dur}s" repeatCount="indefinite"/></rect>`
 
   // thin lit clouds
   const clouds = new Pix()
@@ -171,7 +188,7 @@ function innerLightHD() {
   cloud(60, 12, 22, '#8a4466', '#d2745a')
   cloud(50, 22, 22, '#c8605a', '#ffb468')
   cloud(14, 9, 14, '#5a3062', '#8a4466')
-  back += `<g>${clouds.svg()}<animateTransform attributeName="transform" type="translate" values="0 0;${2 * Q} 0" dur="${dur}s" repeatCount="indefinite"/></g>`
+  back += `<g>${clouds.svg()}${inlGlide([[0, 0, 0], [dur / 2, 1.5, 0, INL_EASE], [dur, 0, 0, INL_EASE]], dur)}</g>`
 
   // far hills, a line of distant houses, near ridge
   const hills = new Pix()
@@ -192,7 +209,7 @@ function innerLightHD() {
     far.set(x + w - 1, base - h, '#9a4a5e')
   }
   const farLights = new Pix().set(70, fh[70] - 1, '#ffcf6a')
-  back += hills.svg() + far.svg() + `<g>${farLights.svg()}<animate attributeName="opacity" values="1;0.8;1" dur="5.5s" repeatCount="indefinite"/></g>`
+  back += hills.svg() + far.svg() + `<g>${farLights.svg()}<animate attributeName="opacity" values="1;0.8;1" dur="${(dur / 3).toFixed(4)}s" repeatCount="indefinite"/></g>`
   const ridge = new Pix()
   for (let c = 0; c < GW; c++) {
     const h = 34 + Math.round(1.1 * Math.sin(c / 5 + 2) + 0.6 * Math.sin(c / 2.3))
@@ -278,8 +295,8 @@ function innerLightHD() {
   house.rect(79, 24, 1, 3, '#2e1a2c')
 
   back += house.svg()
-  back += `<g>${glow.svg()}<animate attributeName="opacity" values="1;0.9;1" dur="6s" repeatCount="indefinite"/></g>`
-  back += `<g>${glow2.svg()}<animate attributeName="opacity" values="0.92;1;0.92" dur="7.5s" repeatCount="indefinite"/></g>`
+  back += `<g>${glow.svg()}<animate attributeName="opacity" values="1;0.9;1" dur="${(dur / 3).toFixed(4)}s" repeatCount="indefinite"/></g>`
+  back += `<g>${glow2.svg()}<animate attributeName="opacity" values="0.92;1;0.92" dur="${(dur / 2).toFixed(4)}s" repeatCount="indefinite"/></g>`
   back += `<ellipse cx="${13.5 * Q}" cy="${38 * Q}" rx="16" ry="5" fill="url(#inlWarm)"/>`
 
   // the dry tree, bare branches against the glow
@@ -302,8 +319,8 @@ function innerLightHD() {
   for (let i = 0; i < 6; i++) {
     const x = 26 + i * 11
     const y = 14 + (i % 3) * 6
-    const d = 7 + i
-    back += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#ffd89a" opacity="0"><animateMotion path="M0 0 q 10 -4 18 2 t 16 -4" dur="${d}s" begin="${i * 1.3}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.55;0" dur="${d}s" begin="${i * 1.3}s" repeatCount="indefinite"/></rect>`
+    const d = (dur / 2).toFixed(4)
+    back += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#ffd89a" opacity="0"><animateMotion path="M0 0 q 10 -4 18 2 t 16 -4" dur="${d}s" begin="${-i * 1.43}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.55;0" dur="${d}s" begin="${-i * 1.43}s" repeatCount="indefinite"/></rect>`
   }
 
   // the probe: a point of light climbing out of the hills while he looks up
@@ -315,34 +332,20 @@ function innerLightHD() {
     const Y0 = 30
     const fx = 50
     const fy = 5
-    // whole-pixel path: one step for every art px it moves
-    const at = (t: number): [number, number] => {
-      const f = Math.min(1, Math.max(0, (t - t0) / (t1 - t0)))
-      const e = 1 - (1 - f) * (1 - f)
-      return [Math.round((fx - X0) * e), Math.round((fy - Y0) * e)]
-    }
-    const path = (lag: number) => {
-      const out: [number, number, number][] = []
-      let last = ''
-      for (let t = t0 + lag; t <= t1 + lag + 0.001; t += 0.05) {
-        const [x, y] = at(t - lag)
-        if (`${x},${y}` === last) continue
-        last = `${x},${y}`
-        out.push([+t.toFixed(3), x, y])
-      }
-      return out
-    }
+    // a straight climb that eases out as it nears its place (quadratic ease-out)
+    const path = (lag: number) =>
+      inlGlide([[t0 + lag, 0, 0], [t1 + lag, fx - X0, fy - Y0, '0.33 0.67 0.67 1']], dur)
     const head = new Pix().set(X0, Y0, '#ffffff')
     const halo = new Pix().set(X0 - 1, Y0, '#cfe6ff').set(X0 + 1, Y0, '#cfe6ff').set(X0, Y0 - 1, '#cfe6ff').set(X0, Y0 + 1, '#cfe6ff')
     const trail = (lag: number, c: string, o: number) =>
-      `<g opacity="0">${inlFade([[t0 + lag, 0], [t0 + lag + 0.6, o], [t1 - 0.3, o], [t1 + 0.6, 0]], dur)}<g>${new Pix().set(X0, Y0, c).svg()}${inlPath(path(lag), dur)}</g></g>`
+      `<g opacity="0">${inlFade([[t0 + lag, 0], [t0 + lag + 0.6, o], [t1 - 0.3, o], [t1 + 0.6, 0]], dur)}<g>${new Pix().set(X0, Y0, c).svg()}${path(lag)}</g></g>`
     back += trail(0.5, '#ffd2a0', 0.3) + trail(0.25, '#ffe8c8', 0.55)
     // the rising light fades in over the hills
-    back += `<g opacity="0">${inlFade([[t0, 0], [t0 + 0.8, 1], [t1 + 0.4, 1], [t1 + 1.2, 0]], dur)}<g>${halo.svg()}${head.svg()}${inlPath(path(0), dur)}</g></g>`
+    back += `<g opacity="0">${inlFade([[t0, 0], [t0 + 0.8, 1], [t1 + 0.4, 1], [t1 + 1.2, 0]], dur)}<g>${halo.svg()}${head.svg()}${path(0)}</g></g>`
     // where it settles: a small soft glow that rises and ebbs, then a star that stays
-    back += `<circle cx="${(fx + 0.5) * Q}" cy="${(fy + 0.5) * Q}" r="5" fill="#dfeaff" opacity="0">${inlFade([[t1 - 0.3, 0], [t1 + 0.5, 0.22], [t1 + 1.8, 0.07], [dur, 0.06]], dur)}</circle>`
+    back += `<circle cx="${(fx + 0.5) * Q}" cy="${(fy + 0.5) * Q}" r="5" fill="#dfeaff" opacity="0">${inlFade([[t1 - 0.3, 0], [t1 + 0.5, 0.22], [t1 + 1.8, 0.07], [dur - 1.6, 0.06], [dur, 0]], dur)}</circle>`
     const star = new Pix().set(fx, fy, '#ffffff').set(fx - 1, fy, '#cfe6ff').set(fx + 1, fy, '#cfe6ff').set(fx, fy - 1, '#cfe6ff').set(fx, fy + 1, '#cfe6ff')
-    back += `<g opacity="0">${inlFade([[t1 - 0.2, 0], [t1 + 0.6, 1]], dur)}<g>${star.svg()}<animate attributeName="opacity" values="1;0.75;1" dur="3.4s" repeatCount="indefinite"/></g></g>`
+    back += `<g opacity="0">${inlFade([[t1 - 0.2, 0], [t1 + 0.6, 1], [dur - 1.6, 1], [dur, 0]], dur)}<g>${star.svg()}<animate attributeName="opacity" values="1;0.75;1" dur="${(dur / 5).toFixed(4)}s" repeatCount="indefinite"/></g></g>`
   }
 
   s += `<g mask="url(#inlFade)">${back}</g>`
@@ -427,53 +430,72 @@ function innerLightHD() {
   half.set(KX + 13, KY + 6, fl.hole).set(KX + 16, KY + 7, fl.hole).set(KX + 19, KY + 7, fl.band).set(KX + 19, KY + 8, fl.band)
   half.rect(KX + 23, KY + 11, 1, 2, fl.tassel)
   const eyesShut = new Pix().rect(KX + 6, KY + 4, 2, 1, EYE_HD).rect(KX + 12, KY + 4, 2, 1, EYE_HD)
+  const eyesHalf = new Pix().rect(KX + 6, KY + 3, 2, 2, EYE_HD).rect(KX + 12, KY + 3, 2, 2, EYE_HD)
 
+  // in-betweens: the flute swings from his mouth (f = 0) down to hanging (f = 1),
+  // through the half-way drawing at f = 0.5
+  const tilt = (f: number) => {
+    const p = new Pix()
+    p.rect(KX + 18, KY + 5, 3, 2, k.skin).set(KX + 20, KY + 5, k.light).rect(KX + 18, KY + 7, 3, 1, k.shade)
+    const g = f < 0.5 ? f / 0.5 : (f - 0.5) / 0.5
+    const L = (u: number, v: number) => Math.round(u + (v - u) * g)
+    const [ax, ay, bx, by] = (f < 0.5 ? [L(9, 10), 5, L(26, 25), L(5, 10)] : [L(10, 21), 5, L(25, 21), L(10, 14)]).map((v, i) => (i % 2 ? v : KX + v))
+    const steep = Math.abs(by - ay) > Math.abs(bx - ax)
+    if (!steep) inlLine(p, ax, KY + ay + 1, bx, KY + by + 1, fl.mid)
+    inlLine(p, ax, KY + ay, bx, KY + by, steep ? fl.mid : fl.hi)
+    p.set(ax, KY + ay, fl.dark).set(bx, KY + by, fl.dark)
+    const m = (u: number, v: number, w: number) => Math.round(u + (v - u) * w)
+    p.set(m(ax, bx, 0.55), KY + m(ay, by, 0.55), fl.band)
+    p.rect(m(ax, bx, 0.85) + (steep ? 1 : 0), KY + m(ay, by, 0.85) + (steep ? 0 : 1), 1, 2, fl.tassel)
+    return p.svg()
+  }
   kamin += shown(play.svg(), INL_PLAY, dur)
-  kamin += shown(half.svg(), INL_MOVE, dur)
-  kamin += shown(eyesShut.svg(), INL_MOVE, dur)
+  kamin += shown(tilt(1 / 6), INL_TILT(1), dur)
+  kamin += shown(tilt(2 / 6), INL_TILT(2), dur)
+  kamin += shown(half.svg(), INL_TILT(3), dur)
+  kamin += shown(tilt(4 / 6), INL_TILT(4), dur)
+  kamin += shown(tilt(5 / 6), INL_TILT(5), dur)
+  kamin += shown(eyesShut.svg(), [[6.05, 6.55], [13.35, 13.75]], dur)
+  kamin += shown(eyesHalf.svg(), [[6.55, 6.7], [13.2, 13.35]], dur)
   kamin += shown(rest.svg(), INL_REST, dur)
   // eyes open ahead, then turn up to the light as it climbs
-  kamin += shown(eyesFwd.svg(), [[6.6, 8.2], [12.9, 13.2]], dur)
+  kamin += shown(eyesFwd.svg(), [[6.7, 8.2], [12.9, 13.2]], dur)
   kamin += shown(eyesUp.svg(), [[8.2, 12.9]], dur)
   kamin += shown(glint.svg(), [[10.9, 11.6], [11.75, 12.9]], dur)
   kamin += shown(lids.svg(), [[11.6, 11.75]], dur)
 
-  // sway: lean one pixel with the phrase while he plays, still while he watches
-  const sway: [number, number, number][] = [[0, 0, 0]]
-  let lean = 0
-  for (let t = 1.2; t < 5.9; t += 1.2) sway.push([t, (lean ^= 1), 0])
-  sway.push([5.9, 0, 0])
-  lean = 0
-  for (let t = 14.6; t < dur - 0.6; t += 1.4) sway.push([t, (lean ^= 1), 0])
-  s += `<g>${kamin}${inlPath(sway, dur)}</g>`
+  // sway: a slow, eased one-pixel lean with the phrase while he plays, still while he watches
+  const sway: [number, number, number, string?][] = [[0, 0, 0]]
+  for (const [t, x] of [[1.2, 1], [2.4, 0], [3.6, 1], [4.8, 0], [5.9, 0], [13.9, 0], [15.3, 1], [dur, 0]] as [number, number][]) sway.push([t, x, 0, INL_EASE])
+  s += `<g>${kamin}${inlGlide(sway, dur)}</g>`
 
   // notes drifting slowly up from the flute and fading
   const noteA = ['.#.', '.##', '.#.', '##.', '##.']
   const noteB = ['.####', '.#..#', '.#..#', '##.##', '##.##']
   const noteC = ['..#', '..#', '..#', '###', '##.']
   // first melody (one already afloat when the scene opens), then a soft reprise
-  const notes: [number, number][] = [[-1.4, 1], [0.1, 1], [1.2, 1], [2.3, 1], [3.4, 1], [4.6, 1], [14.1, 0.75], [15.4, 0.7]]
+  const notes: [number, number][] = [[0.1, 1], [1.2, 1], [2.3, 1], [3.4, 1], [4.6, 1], [14.1, 0.75], [15.4, 0.7]]
+  const runs: [number, number, number][] = []
   notes.forEach(([t0, peak], i) => {
+    runs.push([t0, peak, i + 1]) // numbered as before, so each note keeps its shape and colour
+    if (t0 + 4.6 > dur) runs.push([t0 - dur, peak, i + 1])
+  })
+  runs.forEach(([t0, peak, i]) => {
     const len = 4.6
     const shape = [noteA, noteC, noteB][i % 3]
     const ox = KX + 23 + (i % 2)
     const oy = KY + 1
     const c = i % 2 ? '#ffe6b0' : '#fff4d6'
     const n = new Pix().rows(shape, ox, oy - shape.length, { '#': c }).svg()
-    const steps: [number, number, number][] = []
-    const N = 22
+    const steps: [number, number, number, string?][] = []
+    const N = 8
     const drift = i % 2 ? 1 : -1
-    let last = ''
     for (let j = 0; j <= N; j++) {
       const f = j / N
-      const dx = Math.round(drift * 2 * Math.sin(f * 4 + i) - f * (3 + (i % 3) * 2))
-      const dy = -Math.round(f * 20)
-      if (`${dx},${dy}` === last) continue
-      last = `${dx},${dy}`
-      steps.push([+(t0 + f * len).toFixed(3), dx, dy])
+      steps.push([+(t0 + f * len).toFixed(3), +(drift * 2 * Math.sin(f * 4 + i) - f * (3 + (i % 3) * 2)).toFixed(2), +(-f * 20).toFixed(2)])
     }
     const op = inlFade([[t0, 0], [t0 + 0.6, peak], [t0 + len * 0.5, peak], [t0 + len, 0]], dur)
-    s += `<g opacity="0">${op}<g>${n}${inlPath(steps, dur)}</g></g>`
+    s += `<g opacity="0">${op}<g>${n}${inlGlide(steps, dur)}</g></g>`
   })
 
   // ---------- Eline ----------
@@ -515,11 +537,11 @@ function innerLightHD() {
   upper += shown(eLeft.svg(), [[7.0, 8.6], [13.4, 14.05]], dur)
   upper += shown(eUp.svg(), [[8.6, 12.0], [12.15, 13.4]], dur)
   // she leans toward him as they watch the new star, and stays there
-  eline += `<g>${upper}${inlPath([[0, 0, 0], [11.2, -1, 0], [11.9, -2, 0]], dur)}</g>`
+  eline += `<g>${upper}${inlGlide([[0, 0, 0], [10.9, 0, 0], [12.1, -2, 0, INL_EASE], [dur - 1.5, -2, 0], [dur, 0, 0, INL_EASE]], dur)}</g>`
   s += eline
 
   // warm rim of evening light on the two of them
-  s += `<ellipse cx="${(SUNX - 2) * Q}" cy="${34 * Q}" rx="70" ry="16" fill="url(#inlWarm)"><animate attributeName="opacity" values="0.88;1;0.88" dur="10s" repeatCount="indefinite"/></ellipse>`
+  s += `<ellipse cx="${(SUNX - 2) * Q}" cy="${34 * Q}" rx="70" ry="16" fill="url(#inlWarm)"><animate attributeName="opacity" values="0.88;1;0.88" dur="${(dur / 2).toFixed(4)}s" repeatCount="indefinite"/></ellipse>`
   // keep the title corner quiet
   s += `<rect x="0" y="${40 * Q}" width="${36 * Q}" height="${8 * Q}" fill="url(#inlShadeG)"/>`
   return s

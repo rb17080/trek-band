@@ -21,19 +21,21 @@ function ctRnd(seed: number) {
   return () => ((s = (s * 9301 + 49297) % 233280) / 233280)
 }
 
-// translate jitter, discrete steps between t0 and t1 (seconds), amp in CSS px
+// translate jitter between t0 and t1 (seconds), amp in CSS px: an eased sway
+// from one offset to the next, starting and ending at rest
 function ctJitter(t0: number, t1: number, step: number, amp: number, dur: number, seed: number) {
   const r = ctRnd(seed)
-  const times = [0]
-  const vals = ['0 0']
-  for (let t = t0; t < t1 - 1e-6; t += step) {
+  const times = [0, t0 / dur]
+  const vals = ['0 0', '0 0']
+  for (let t = t0 + step; t < t1 - step / 2; t += step) {
     times.push(t / dur)
     const dx = Math.round((r() * 2 - 1) * amp)
     const dy = Math.round((r() * 2 - 1) * amp * 0.6)
     vals.push(`${dx} ${dy}`)
   }
-  times.push(t1 / dur), vals.push('0 0')
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${times.map(t => +t.toFixed(4)).join(';')}"/>`
+  times.push(t1 / dur, 1), vals.push('0 0', '0 0')
+  const splines = Array(vals.length - 1).fill('0.45 0 0.55 1').join(';')
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${times.map(t => +t.toFixed(4)).join(';')}" keySplines="${splines}"/>`
 }
 
 // Voyager seen from above, bow to the right: 32 x 13 art pixels
@@ -124,6 +126,15 @@ function ctArmMid(k: CrabHD, x: number, y: number) {
   return p.svg()
 }
 
+// the very first lift: the claw just leaving the armrest
+function ctArmLow(k: CrabHD, x: number, y: number) {
+  const p = new Pix()
+  p.rect(x + 18, y + 4, 3, 2, k.skin).rect(x + 20, y + 3, 2, 2, k.skin).rect(x + 18, y + 6, 2, 1, k.shade).set(x + 21, y + 5, k.shade)
+  p.rect(x + 21, y + 1, 1, 2, k.skin).rect(x + 23, y + 1, 1, 2, k.skin).rect(x + 21, y + 2, 3, 1, k.skin)
+  p.set(x + 21, y + 1, k.light).set(x + 23, y + 1, k.light)
+  return p.svg()
+}
+
 function caretaker() {
   const T = SCENE_SECONDS
   const W = GW * Q
@@ -138,6 +149,10 @@ function caretaker() {
   const FADE1 = 11.0 // the Delta Quadrant is all that is left
   const LOOK = 11.6 // Janeway looks up at the array
   const ARM = 12.5 // and raises her claw
+  const BACK0 = 15.6 // the replay has no veil: from here everything eases back to its t=0 spot
+  const RET0 = 13.4 // the plasma starts gathering again, slowly (3.8 s), for the next showing
+  // ambient loops run on whole fractions of the story so t=T matches t=0
+  const per = (n: number) => +(T / n).toFixed(5)
 
   let s = `<defs>
     <linearGradient id="ctFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
@@ -165,15 +180,15 @@ function caretaker() {
   ;[[28, 5], [52, 3], [60, 14], [40, 9], [88, 30]].forEach(([x, y], i) => {
     const glow = new Pix()
     glow.set(x - 1, y, '#a8c4ff').set(x + 1, y, '#a8c4ff').set(x, y - 1, '#a8c4ff').set(x, y + 1, '#a8c4ff')
-    calm += `<g>${glow.svg()}<animate attributeName="opacity" values="0.2;0.8;0.2" dur="${2.6 + i * 0.6}s" begin="${i * 0.5}s" repeatCount="indefinite"/></g>`
+    calm += `<g>${glow.svg()}<animate attributeName="opacity" values="0.2;0.8;0.2" dur="${per([7, 6, 5, 4, 8][i])}s" begin="${-i * 0.5}s" repeatCount="indefinite"/></g>`
     calm += new Pix().set(x, y, '#ffffff').svg()
   })
   const ax = 77
   const ay = 11
-  calm += `<circle cx="${(ax + 0.5) * Q}" cy="${(ay + 0.5) * Q}" r="30" fill="url(#ctArrG)"><animate attributeName="opacity" values="0.75;1;0.75" dur="4s" repeatCount="indefinite"/></circle>`
+  calm += `<circle cx="${(ax + 0.5) * Q}" cy="${(ay + 0.5) * Q}" r="30" fill="url(#ctArrG)"><animate attributeName="opacity" values="0.75;1;0.75" dur="${per(4)}s" repeatCount="indefinite"/></circle>`
   calm += ctArray(ax, ay)
   ;[[ax - 9, ay - 7], [ax + 10, ay + 3], [ax - 6, ay + 9], [ax + 4, ay - 9]].forEach(([x, y], i) => {
-    calm += `<g>${new Pix().set(x, y, '#9fe4ff').svg()}<animate attributeName="opacity" values="1;0.3;1" dur="${2 + i * 0.4}s" repeatCount="indefinite"/></g>`
+    calm += `<g>${new Pix().set(x, y, '#9fe4ff').svg()}<animate attributeName="opacity" values="1;0.3;1" dur="${per([8, 7, 6, 5][i])}s" repeatCount="indefinite"/></g>`
   })
 
   // ---- the Badlands on top: plasma currents drifting slowly, then dissolving ----
@@ -193,8 +208,11 @@ function caretaker() {
       if (c) clouds.set(x, y, c)
     }
   }
-  storm += `<g>${clouds.svg()}<animateTransform attributeName="transform" type="translate" values="0 0;${-12 * Q} 0" dur="${T}s" repeatCount="indefinite"/></g>`
-  const stormG = `<g>${storm}<animate attributeName="opacity" dur="${T}s" repeatCount="indefinite" values="1;1;0;0" keyTimes="0;${kt([FADE0, FADE1])};1"/></g>`
+  const drift = (12 * Q) / T // px per second, as before
+  const hid = FADE1 + 0.2
+  storm += `<g>${clouds.svg()}<animateTransform attributeName="transform" type="translate" calcMode="discrete" values="0 0;${(drift * T).toFixed(2)} 0" keyTimes="0;${k(hid)}" dur="${T}s" repeatCount="indefinite"/><animateTransform attributeName="transform" type="translate" additive="sum" values="0 0;${(-drift * T).toFixed(2)} 0" dur="${T}s" repeatCount="indefinite"/></g>`
+  // the plasma dissolves, and gathers again slowly for the next showing
+  const stormG = `<g>${storm}<animate attributeName="opacity" dur="${T}s" repeatCount="indefinite" values="1;1;0;0;1" keyTimes="0;${kt([FADE0, FADE1, RET0])};1" calcMode="spline" keySplines="0 0 1 1;0.3 0 0.7 1;0 0 1 1;0.3 0 0.7 1"/></g>`
 
   // ---- the bridge floor: dark, console lights glowing softly on the right ----
   const floor = new Pix().rect(0, 42, GW, 6, '#150f22').rect(0, 42, GW, 1, '#2a2140')
@@ -202,24 +220,24 @@ function caretaker() {
   let floorSvg = floor.svg()
   const pads: [number, string][] = [[43, '#f2b866'], [47, '#c9a7ff'], [51, '#ff8a5a'], [57, '#8fb8ff'], [61, '#f2b866'], [67, '#c9a7ff'], [73, '#ff8a5a'], [79, '#8fb8ff'], [83, '#f2b866']]
   pads.forEach(([x, c], i) => {
-    floorSvg += `<g>${new Pix().rect(x, 44, 2, 1, c).svg()}<animate attributeName="opacity" values="1;0.4;1" dur="${1.8 + (i % 4) * 0.5}s" begin="${i * 0.3}s" repeatCount="indefinite"/></g>`
+    floorSvg += `<g>${new Pix().rect(x, 44, 2, 1, c).svg()}<animate attributeName="opacity" values="1;0.4;1" dur="${per([9, 7, 6, 5][i % 4])}s" begin="${-i * 0.3}s" repeatCount="indefinite"/></g>`
   })
 
   // ---- Voyager ----
   const ship = ctShip()
   const halo = `<ellipse cx="${7 * Q}" cy="${1.5 * Q}" rx="16" ry="5" fill="url(#ctNacG)"/><ellipse cx="${7 * Q}" cy="${11.5 * Q}" rx="16" ry="5" fill="url(#ctNacG)"/>`
   // centre of the ship in CSS px over the story: cruise, caught, pulled away, arrives
-  const PT = [0, CAUGHT, 7.4, 10.2, 12.4, T]
-  const pos = ['132 33', '132 33', '138 34', '158 46', '114 58', '110 58']
-  const rot = ['0', '0', '-10', '-16', '0', '0']
-  const scl = ['1', '1', '0.95', '0.55', '0.85', '0.85']
+  const PT = [0, CAUGHT, 7.4, 10.2, 12.4, BACK0 - 0.3, T]
+  const pos = ['132 33', '132 33', '138 34', '158 46', '114 58', '111 58', '132 33']
+  const rot = ['0', '0', '-10', '-16', '0', '0', '0']
+  const scl = ['1', '1', '0.95', '0.55', '0.85', '0.85', '1']
   const anim = (type: string, vals: string[]) =>
     `<animateTransform attributeName="transform" type="${type}" dur="${T}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="0;${kt(PT.slice(1, -1))};1" calcMode="spline" keySplines="${Array(vals.length - 1).fill('0.4 0 0.6 1').join(';')}"/>`
-  const bob = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" values="0 0;0 ${Q};0 0" keyTimes="0;0.5;1" dur="3.2s" repeatCount="indefinite"/>`
+  const bob = `<animateTransform attributeName="transform" type="translate" calcMode="spline" values="0 0;0 ${Q};0 0" keyTimes="0;0.5;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1" dur="${per(5)}s" repeatCount="indefinite"/>`
   const shipG =
     `<g>${anim('translate', pos)}<g>${anim('rotate', rot)}<g>${anim('scale', scl)}` +
     `<g transform="translate(${-16 * Q} ${-6.5 * Q})"><g>${bob}<g>${ctJitter(CAUGHT, 7.6, 0.3, 2, T, 5)}` +
-    `<g>${halo}<animate attributeName="opacity" values="0.75;1;0.75" dur="2.4s" repeatCount="indefinite"/></g>${ship}` +
+    `<g>${halo}<animate attributeName="opacity" values="0.75;1;0.75" dur="${per(7)}s" repeatCount="indefinite"/></g>${ship}` +
     `</g></g></g></g></g></g>`
 
   // ---- the displacement wave: a soft shimmering band, crossing slowly ----
@@ -232,7 +250,7 @@ function caretaker() {
   const wave =
     `<g opacity="0"><g>` +
     `<rect x="0" y="0" width="${36 * Q}" height="${H}" fill="url(#ctWaveG)"/>` +
-    `<g opacity="0.35"><g>${shimmer.svg()}</g><animateTransform attributeName="transform" type="translate" values="0 0;0 ${-GH * Q}" dur="6s" repeatCount="indefinite"/></g>` +
+    `<g opacity="0.35"><g>${shimmer.svg()}</g><animateTransform attributeName="transform" type="translate" values="0 0;0 ${-GH * Q}" dur="${per(3)}s" repeatCount="indefinite"/></g>` +
     `<animateTransform attributeName="transform" type="translate" dur="${T}s" repeatCount="indefinite" values="${-40 * Q} 0;${-40 * Q} 0;${W + 4} 0;${W + 4} 0" keyTimes="0;${kt([WAVE0, WAVE1])};1"/>` +
     `</g><animate attributeName="opacity" dur="${T}s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;${kt([WAVE0 - 0.6, WAVE0 + 0.8, WAVE1 - 0.6, WAVE1])};1"/></g>`
 
@@ -253,9 +271,9 @@ function caretaker() {
   let jane = chair.svg()
   jane += crabHD(
     CT_JANEWAY, jx, jy, 'right', T,
-    { left: [], right: [[ARM, T]] },
+    { left: [], right: [[ARM, BACK0 + 0.3]] },
     [],
-    4.7,
+    per(4),
     p => {
       const A = '#a8452a'
       const AL = '#c96a3e'
@@ -271,14 +289,20 @@ function caretaker() {
     },
   )
   // the claw on its way up, between resting and raised
-  jane += shown(ctArmMid(CT_JANEWAY, jx, jy), [[ARM - 0.35, ARM]], T)
+  // rest -> low (0.1 s) -> diagonal (0.2 s) -> kit half-raised (0.09 s) -> up
+  // and the same way down before the replay
+  jane += shown(ctArmLow(CT_JANEWAY, jx, jy), [[ARM - 0.3, ARM - 0.2], [BACK0 + 0.5, BACK0 + 0.6]], T)
+  jane += shown(ctArmMid(CT_JANEWAY, jx, jy), [[ARM - 0.2, ARM], [BACK0 + 0.3, BACK0 + 0.5]], T)
   // looking up and to the right, at the array
+  // in two one-pixel steps: first across to the right, then up
+  const across = new Pix().rect(jx + 6, jy + 2, 9, 3, CT_JANEWAY.skin).rect(jx + 7, jy + 2, 2, 3, EYE_HD).rect(jx + 13, jy + 2, 2, 3, EYE_HD)
+  jane += shown(across.svg(), [[LOOK, LOOK + 0.12], [BACK0, BACK0 + 0.12]], T)
   const up = new Pix().rect(jx + 6, jy + 1, 9, 4, CT_JANEWAY.skin).rect(jx + 7, jy + 1, 2, 3, EYE_HD).rect(jx + 13, jy + 1, 2, 3, EYE_HD)
-  jane += shown(up.svg(), [[LOOK, T]], T)
+  jane += shown(up.svg(), [[LOOK + 0.12, BACK0]], T)
   // the chair rocks gently while the wave has the ship, then settles
   const rock = [0, 0, 2.5, -2, 2, -1.5, 1, 0, 0]
   const rockT = [0, CAUGHT, 6.6, 7.3, 8.0, 8.7, 9.4, 10.0, T]
-  scene += `<g>${jane}<animateTransform attributeName="transform" type="rotate" dur="${T}s" repeatCount="indefinite" values="${rock.map(a => `${a} ${(jx + 9) * Q} ${(jy + 14) * Q}`).join(';')}" keyTimes="0;${kt(rockT.slice(1, -1))};1"/></g>`
+  scene += `<g>${jane}<animateTransform attributeName="transform" type="rotate" dur="${T}s" repeatCount="indefinite" values="${rock.map(a => `${a} ${(jx + 9) * Q} ${(jy + 14) * Q}`).join(';')}" keyTimes="0;${kt(rockT.slice(1, -1))};1" calcMode="spline" keySplines="${Array(rock.length - 1).fill('0.45 0 0.55 1').join(';')}"/></g>`
 
   s += scene
   return s

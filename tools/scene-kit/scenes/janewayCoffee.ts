@@ -59,6 +59,8 @@ function janewayCoffee() {
   const sx = 6, sy = 3, sw = 80, sh = 20
   const ncx = 66, ncy = 12 // nebula core
   const kt = (list: number[]) => list.map(t => +(t / D).toFixed(4)).join(';')
+  // ambient loops run on whole fractions of the story, so the frame at D matches t=0
+  const per = (n: number) => +(D / n).toFixed(5)
 
   // ---------- the story (seconds) ----------
   // 0.0-1.8   calm: the bridge, the nebula turning, her mug steaming at her side
@@ -69,13 +71,24 @@ function janewayCoffee() {
   // 11.5-12.5 a determined hop and a little nod
   // 13.0-13.4 the claw comes down         13.6-15.8 one last satisfied sip
   // 15.8-17.17 calm again, mug at her side, the nebula still turning
-  const tMugMid: [number, number][] = [[1.8, 2.3], [5.2, 5.6], [13.6, 14.1], [15.4, 15.8]]
+  // the mug travels through five drawings, one art pixel apart, ~0.1 s each:
+  // side -> P1 -> P2 -> P3 (halfway) -> P4 -> at her lips, and back down
+  const lift = (a: number): [number, number][][] => [[[a, a + 0.1]], [[a + 0.1, a + 0.2]], [[a + 0.2, a + 0.35]], [[a + 0.35, a + 0.5]]]
+  const lower = (a: number): [number, number][][] => [[[a + 0.3, a + 0.4]], [[a + 0.2, a + 0.3]], [[a + 0.1, a + 0.2]], [[a, a + 0.1]]]
+  const tMugStep: [number, number][][] = [0, 1, 2, 3].map(i => [lift(1.8)[i], lower(5.2)[i], lift(13.6)[i], lower(15.4)[i]].flat())
   const tMugUp: [number, number][] = [[2.3, 5.2], [14.1, 15.4]]
-  const tMugSide = complement(merge([...tMugMid, ...tMugUp]), dur)
+  const tMugSide = complement(merge([...tMugStep.flat(), ...tMugUp]), dur)
   const tClosed: [number, number][] = [[2.5, 5.0], [14.3, 15.3]]
+  const tHalf: [number, number][] = [[2.4, 2.5], [5.0, 5.1], [14.2, 14.3], [15.3, 15.4]]
   const tGaze: [number, number][] = [[5.8, 8.0]]
   const tLit: [number, number][] = [[8.0, 13.2]]
   const tArmMid: [number, number][] = [[9.4, 9.8], [13.0, 13.4]]
+  // the claw reaches out in three growing drawings on the way up, and back
+  const tReach: [number, number][][] = [
+    [[9.4, 9.5], [13.27, 13.4]],
+    [[9.5, 9.65], [13.13, 13.27]],
+    [[9.65, 9.8], [13.0, 13.13]],
+  ]
   const tPoint: [number, number][] = [[9.8, 13.0]]
   const tBlink: [number, number][] = [[1.2, 1.35], [7.3, 7.45], [16.0, 16.15]]
 
@@ -117,14 +130,14 @@ function janewayCoffee() {
 
   // the nebula on the screen: the glows turn slowly and the core breathes, never flares
   let scr = jcNebula(sx, sy, sw, sh, ncx, ncy).svg()
-  scr += `<g transform="translate(${(ncx + 0.5) * Q} ${(ncy + 0.5) * Q})"><g><ellipse cx="14" cy="0" rx="30" ry="12" fill="url(#jcTeal)"/><ellipse cx="-18" cy="3" rx="22" ry="9" fill="url(#jcSpill)"/><animateTransform attributeName="transform" type="rotate" values="0;110" dur="${D}s" repeatCount="indefinite"/></g></g>`
+  scr += `<g transform="translate(${(ncx + 0.5) * Q} ${(ncy + 0.5) * Q})"><g><ellipse cx="14" cy="0" rx="30" ry="12" fill="url(#jcTeal)"/><ellipse cx="-18" cy="3" rx="22" ry="9" fill="url(#jcSpill)"/><animateTransform attributeName="transform" type="rotate" values="0;110;0" keyTimes="0;0.5;1" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1" dur="${D}s" repeatCount="indefinite"/></g></g>`
   scr += `<ellipse cx="${(ncx + 0.5) * Q}" cy="${(ncy + 0.5) * Q}" rx="34" ry="18" fill="url(#jcCore)" opacity="0.8"><animate attributeName="opacity" values="0.8;0.95;0.8" dur="${D / 2}s" repeatCount="indefinite"/></ellipse>`
   // slow, soft twinkles in the cloud
   const sparks = [[60, 7], [72, 15], [48, 10], [80, 6], [55, 18], [70, 5], [36, 14], [24, 8], [84, 19], [64, 16]]
   sparks.forEach(([x, y], i) => {
     const g = new Pix().set(x - 1, y, '#e8c8ff').set(x + 1, y, '#e8c8ff').set(x, y - 1, '#e8c8ff').set(x, y + 1, '#e8c8ff')
-    const d = 3.2 + (i % 4) * 0.7
-    scr += `<g opacity="0">${g.svg()}${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0;0.8;0;0" keyTimes="0;0.35;0.7;1" dur="${d}s" begin="${(i * 0.53).toFixed(2)}s" repeatCount="indefinite"/></g>`
+    const d = per([5, 4, 4, 3][i % 4])
+    scr += `<g opacity="0">${g.svg()}${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0;0.8;0;0" keyTimes="0;0.35;0.7;1" dur="${d}s" begin="${(-i * 0.53).toFixed(2)}s" repeatCount="indefinite"/></g>`
   })
   // faint distant stars
   let seed = 41
@@ -134,8 +147,8 @@ function janewayCoffee() {
     const y = sy + Math.floor(rnd() * sh)
     scr += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#e6dcff" opacity="${(0.25 + rnd() * 0.4).toFixed(2)}"/>`
   }
-  // a faint scanline drifting down the screen
-  scr += `<rect x="${sx * Q}" y="0" width="${sw * Q}" height="${Q}" fill="#ffffff" opacity="0.05"><animate attributeName="y" values="${sy * Q};${(sy + sh) * Q}" dur="5.4s" repeatCount="indefinite"/></rect>`
+  // a faint scanline drifting down the screen, from just above it to just below (both ends hidden by the clip)
+  scr += `<rect x="${sx * Q}" y="0" width="${sw * Q}" height="${Q}" fill="#ffffff" opacity="0.05"><animate attributeName="y" values="${(sy - 1) * Q};${(sy + sh) * Q}" dur="${per(3)}s" repeatCount="indefinite"/></rect>`
   back += `<g clip-path="url(#jcScr)">${scr}</g>`
   // screen glass glint
   back += new Pix().rect(sx, sy, sw, 1, '#ffffff').svg().replace('<rect', '<rect opacity="0.08"')
@@ -149,7 +162,7 @@ function janewayCoffee() {
 
   // console lights, slowly dimming and brightening
   ;[[8, 32, '#e89a4a'], [52, 29, '#6f8fd8'], [84, 32, '#c26a8a'], [60, 36, '#e8b06a'], [76, 36, '#6f8fd8']].forEach(([x, y, c], i) => {
-    s += `<rect x="${(x as number) * Q}" y="${(y as number) * Q}" width="${Q * 2}" height="${Q}" fill="${c}"><animate attributeName="opacity" values="1;0.35;1" dur="${(2.1 + i * 0.5).toFixed(1)}s" repeatCount="indefinite"/></rect>`
+    s += `<rect x="${(x as number) * Q}" y="${(y as number) * Q}" width="${Q * 2}" height="${Q}" fill="${c}"><animate attributeName="opacity" values="1;0.35;1" dur="${per([8, 7, 6, 5, 4][i])}s" repeatCount="indefinite"/></rect>`
   })
 
   // the conn console on the right, in front of the screen
@@ -199,6 +212,9 @@ function janewayCoffee() {
   const lids = eyeSkin([6, 12])
   for (const e of [6, 12]) lids.rect(X + e, Y + 1, 2, 1, k.skin)
 
+  const half = eyeSkin([])
+  for (const e of [6, 12]) half.rect(X + e, Y + 2, 2, 2, k.skin)
+  jan += shown(half.svg(), tHalf, dur)
   jan += shown(closed.svg(), tClosed, dur)
   jan += shown(gaze.svg(), tGaze, dur)
   jan += shown(lit.svg(), tLit, dur)
@@ -209,8 +225,8 @@ function janewayCoffee() {
   const steam = (mx: number, my: number, n: number) => {
     let o = ''
     for (let i = 0; i < n; i++) {
-      const d = 2.4 + i * 0.5
-      o += `<rect x="${(mx + 3 + (i % 2)) * Q}" y="${(my - 1) * Q}" width="${Q}" height="${Q * 2}" fill="#e9e2f2" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 4 : -4} -6 0 -11 t ${i % 2 ? 3 : -3} -10" dur="${d}s" begin="${i * 0.8}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.6;0" dur="${d}s" begin="${i * 0.8}s" repeatCount="indefinite"/></rect>`
+      const d = per([7, 6, 5][i])
+      o += `<rect x="${(mx + 3 + (i % 2)) * Q}" y="${(my - 1) * Q}" width="${Q}" height="${Q * 2}" fill="#e9e2f2" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 4 : -4} -6 0 -11 t ${i % 2 ? 3 : -3} -10" dur="${d}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.6;0" dur="${d}s" repeatCount="indefinite"/></rect>`
     }
     return o
   }
@@ -219,22 +235,41 @@ function janewayCoffee() {
   const m1x = X - 9, m1y = Y + 2
   const side2 = mugAt(m1x, m1y)
   side2.rect(X - 4, Y + 4, 1, 2, k.skin).set(X - 4, Y + 6, k.shade).rect(X - 6, Y + 7, 3, 1, k.skin).set(X - 6, Y + 7, k.light)
-  const sideSvg = side.svg() + side2.svg() + steam(m1x, m1y, 3)
-  // halfway up
-  const mid = new Pix()
-  mid.rect(X - 3, Y + 4, 3, 2, k.skin).rect(X - 3, Y + 6, 3, 1, k.shade)
-  mid.rect(X - 5, Y + 3, 2, 3, k.skin).rect(X - 5, Y + 5, 2, 1, k.shade)
-  const m3x = X - 8, m3y = Y - 1
-  const midSvg = mid.svg() + mugAt(m3x, m3y).rect(m3x + 2, m3y + 5, 3, 1, k.skin).set(m3x + 2, m3y + 5, k.light).svg() + steam(m3x, m3y, 2)
+  // in between: the mug at (mx, my), the claw under it, a forearm back to the shoulder
+  const between = (mx: number, my: number) => {
+    const q = new Pix()
+    q.rect(X - 3, Y + 4, 3, 2, k.skin).rect(X - 3, Y + 6, 3, 1, k.shade)
+    const fx = mx + 3, fy = my + 5
+    const n = Math.max(Math.abs(X - 4 - fx), Math.abs(Y + 4 - fy))
+    for (let i = 0; i <= n; i++) {
+      const xx = Math.round(fx + ((X - 4 - fx) * i) / Math.max(1, n))
+      const yy = Math.round(fy + ((Y + 4 - fy) * i) / Math.max(1, n))
+      q.rect(xx, yy, 2, 2, k.skin).set(xx, yy + 1, k.shade)
+    }
+    const m = mugAt(mx, my)
+    m.rect(mx + 2, my + 5, 3, 1, k.skin).set(mx + 2, my + 5, k.light)
+    return q.svg() + m.svg()
+  }
+  const steps: [number, number][] = [[m1x, m1y - 1], [m1x + 1, m1y - 2], [m1x + 1, m1y - 3], [m1x + 2, m1y - 4]]
   // raised to her face
   const up = new Pix()
   up.rect(X - 3, Y + 4, 3, 2, k.skin).rect(X - 3, Y + 6, 3, 1, k.shade)
   up.rect(X - 4, Y + 1, 2, 5, k.skin).rect(X - 4, Y + 1, 1, 5, k.shade)
   const m2x = X - 6, m2y = Y - 3
-  const upSvg = up.svg() + mugAt(m2x, m2y).rect(m2x + 2, m2y + 5, 3, 1, k.skin).set(m2x + 2, m2y + 5, k.light).svg() + steam(m2x, m2y, 3)
-  jan += shown(sideSvg, tMugSide, dur)
-  jan += shown(midSvg, tMugMid, dur)
+  const upSvg = up.svg() + mugAt(m2x, m2y).rect(m2x + 2, m2y + 5, 3, 1, k.skin).set(m2x + 2, m2y + 5, k.light).svg()
+  jan += shown(side.svg() + side2.svg(), tMugSide, dur)
+  steps.forEach(([mx, my], i) => (jan += shown(between(mx, my), tMugStep[i], dur)))
   jan += shown(upSvg, tMugUp, dur)
+  // one set of steam wisps, gliding along with the mug
+  const off = (dx: number, dy: number) => `${dx * Q} ${dy * Q}`
+  const sKeys: [number, string][] = [[0, off(0, 0)]]
+  for (const [a, dir] of [[1.8, 1], [5.2, -1], [13.6, 1], [15.4, -1]] as [number, number][]) {
+    const path = dir > 0 ? [off(0, 0), off(m2x - m1x, m2y - m1y)] : [off(m2x - m1x, m2y - m1y), off(0, 0)]
+    const len = dir > 0 ? 0.5 : 0.4
+    sKeys.push([a, path[0]], [a + len, path[1]])
+  }
+  sKeys.push([D, off(0, 0)])
+  jan += `<g>${steam(m1x, m1y, 3)}<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${D}s" repeatCount="indefinite" values="${sKeys.map(([, v]) => v).join(';')}" keyTimes="${kt(sKeys.map(([t]) => t))}" keySplines="${sKeys.slice(1).map(() => '0.4 0 0.2 1').join(';')}"/></g>`
 
   // right claw: at rest, half raised, or pointing at the nebula
   jan += shown(armRestHD(k, X, Y, 'right'), complement(merge([...tPoint, ...tArmMid]), dur), dur)
@@ -245,7 +280,18 @@ function janewayCoffee() {
     am.rect(ax + i * 2, yy, 3, 2, k.skin).rect(ax + i * 2, yy + 2, 2, 1, k.shade).set(ax + i * 2 + 2, yy, k.rim)
   }
   am.rect(ax + 6, Y + 1, 2, 2, k.skin).set(ax + 7, Y + 1, k.light).set(ax + 6, Y + 3, k.shade)
-  jan += shown(am.svg(), tArmMid, dur)
+  void am
+  const reach = (n: number) => {
+    const r = new Pix()
+    for (let i = 0; i < n; i++) {
+      const yy = Y + 4 - i * 2
+      r.rect(ax + i * 2, yy, 3, 2, k.skin).rect(ax + i * 2, yy + 2, 2, 1, k.shade).set(ax + i * 2 + 2, yy, k.rim)
+    }
+    const ex = ax + n * 2, ey = Y + 4 - n * 2
+    r.rect(ex, ey, 2, 2, k.skin).set(ex + 1, ey, k.light).set(ex, ey + 2, k.shade).set(ex + 2, ey - 1, k.skin)
+    return r.svg()
+  }
+  ;[2, 3, 4].forEach((n, i) => (jan += shown(reach(n), tReach[i], dur)))
   const pt = new Pix()
   // a long diagonal arm reaching up toward the nebula
   for (let i = 0; i < 5; i++) {
@@ -272,7 +318,10 @@ function janewayCoffee() {
   s += `<g opacity="0">${g2.svg()}<animate attributeName="opacity" values="0;0;0.9;0;0" keyTimes="${kt([0, 8.4, 8.9, 9.9, D])}" dur="${D}s" repeatCount="indefinite"/></g>`
 
   // the determined hop, then a small nod of a hop
-  const hop = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${D}s" repeatCount="indefinite" values="0 0;0 ${-Q};0 ${-2 * Q};0 ${-Q};0 0;0 ${-Q};0 0" keyTimes="${kt([0, 11.5, 11.6, 11.85, 11.95, 12.3, 12.55])}"/>`
+  const hopV = ['0 0', '0 0', `0 ${-2 * Q}`, `0 ${-2 * Q}`, '0 0', '0 0', `0 ${-Q}`, `0 ${-Q}`, '0 0', '0 0']
+  const hopT = [0, 11.45, 11.65, 11.82, 12.0, 12.25, 12.38, 12.45, 12.6, D]
+  const hopS = ['0 0 1 1', '0.2 0.7 0.4 1', '0 0 1 1', '0.6 0 0.8 0.3', '0 0 1 1', '0.2 0.7 0.4 1', '0 0 1 1', '0.6 0 0.8 0.3', '0 0 1 1']
+  const hop = `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${D}s" repeatCount="indefinite" values="${hopV.join(';')}" keyTimes="${kt(hopT)}" keySplines="${hopS.join(';')}"/>`
   s += `<g>${jan}${hop}</g>`
   return s
 }

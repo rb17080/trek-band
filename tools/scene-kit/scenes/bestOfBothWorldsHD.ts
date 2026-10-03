@@ -35,6 +35,24 @@ function bobRnd(seed: number) {
   return () => ((s = (s * 9301 + 49297) % 233280) / 233280)
 }
 
+// one smooth transform on the story timeline: keys are [seconds, value, spline into it]
+const BOB_EASE = '0.42 0 0.58 1'
+function bobTween(type: string, keys: [number, string, string?][]) {
+  const T = SCENE_SECONDS
+  const k = [...keys]
+  if (k[0][0] > 0) k.unshift([0, k[0][1]])
+  if (k[k.length - 1][0] < T) k.push([T, k[k.length - 1][1]])
+  const kt = k.map(([t]) => +(t / T).toFixed(4))
+  kt[kt.length - 1] = 1
+  return `<animateTransform attributeName="transform" type="${type}" calcMode="spline" dur="${T}s" repeatCount="indefinite" values="${k.map(x => x[1]).join(';')}" keyTimes="${kt.join(';')}" keySplines="${k.slice(1).map(x => x[2] ?? BOB_EASE).join(';')}"/>`
+}
+
+// a raised claw that rises smoothly out of the shoulder (clipped at the shoulder line)
+// keys: [seconds, rows still hidden (0 = fully up, 12 = fully down), spline]
+function bobArmRise(id: string, k: CrabHD, x: number, y: number, keys: [number, number, string?][]) {
+  return `<clipPath id="${id}"><rect x="${(x + 17) * Q}" y="${(y - 9) * Q}" width="${7 * Q}" height="${13 * Q}"/></clipPath><g clip-path="url(#${id})"><g transform="translate(0 ${12 * Q})">${armUpHD(k, x, y, 'right')}${bobTween('translate', keys.map(([t, r, sp]) => [t, `0 ${r * Q}`, sp]))}</g></g>`
+}
+
 // screen content area, in art pixels
 const BOB_SX = 29
 const BOB_SY = 3
@@ -99,10 +117,10 @@ function bobLocutus() {
   p.rect(74, 16, 3, 2, '#3e4449')
   s += p.svg()
   // the laser from the eyepiece, sweeping
-  s += `<g><rect x="${66 * Q}" y="${10 * Q - 0.5}" width="60" height="1" fill="#ff4040"/><circle cx="${65 * Q}" cy="${10 * Q}" r="4" fill="#ff3030" opacity="0.35"/><animateTransform attributeName="transform" type="rotate" values="-10 ${65 * Q} ${10 * Q};6 ${65 * Q} ${10 * Q};-10 ${65 * Q} ${10 * Q}" dur="3.2s" repeatCount="indefinite"/></g>`
+  s += `<g><rect x="${66 * Q}" y="${10 * Q - 0.5}" width="60" height="1" fill="#ff4040"/><circle cx="${65 * Q}" cy="${10 * Q}" r="4" fill="#ff3030" opacity="0.35"/><animateTransform attributeName="transform" type="rotate" values="-10 ${65 * Q} ${10 * Q};6 ${65 * Q} ${10 * Q};-10 ${65 * Q} ${10 * Q}" calcMode="spline" keyTimes="0;0.5;1" keySplines="${BOB_EASE};${BOB_EASE}" dur="${(SCENE_SECONDS / 5).toFixed(3)}s" repeatCount="indefinite"/></g>`
   // blinking alcove lights
   ;[[31, 9], [36, 15], [80, 8], [84, 20], [31, 21]].forEach(([x, y], i) => {
-    s += `<g>${bobR(x, y, 1, 1, '#5dff95')}<animate attributeName="opacity" values="1;0.2;1" dur="${1.8 + i * 0.45}s" repeatCount="indefinite"/></g>`
+    s += `<g>${bobR(x, y, 1, 1, '#5dff95')}<animate attributeName="opacity" values="1;0.2;1" dur="${(SCENE_SECONDS / (9 - i)).toFixed(3)}s" repeatCount="indefinite"/></g>`
   })
   return s
 }
@@ -196,7 +214,7 @@ function bestOfBothWorldsHD() {
   lc.rect(10, 20, 13, 1, '#b48fd6')
   back += `<g opacity="0.6">${lc.svg()}</g>`
   ;[[15, 19], [18, 19], [21, 19]].forEach(([x, y], i) => {
-    back += `<g>${bobR(x, y, 2, 1, i === 1 ? '#ff6b5a' : '#f7c487')}<animate attributeName="opacity" values="1;0.35;1" dur="${1.9 + i * 0.6}s" repeatCount="indefinite"/></g>`
+    back += `<g>${bobR(x, y, 2, 1, i === 1 ? '#ff6b5a' : '#f7c487')}<animate attributeName="opacity" values="1;0.35;1" dur="${(SCENE_SECONDS / [9, 7, 6][i]).toFixed(3)}s" repeatCount="indefinite"/></g>`
   })
   // red alert strip by the right wall, steady
   back += bobR(88, 4, 2, 21, '#ff2e3a', ' opacity="0.4"')
@@ -222,8 +240,8 @@ function bestOfBothWorldsHD() {
 
   // Locutus: dims under the blue, then sways gently in the interference and settles
   const k = (t: number) => +(t / T).toFixed(4)
-  const sway: [number, number][] = [[0, 0], [12.0, 1], [12.45, 0], [12.9, -1], [13.35, 0], [13.8, 1], [14.25, 0]]
-  let scr = `<g>${bobLocutus()}${bobRamp([[10.0, 1], [tFull, 0.45], [12.6, 0.45], [14.0, 1]])}<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${T}s" repeatCount="indefinite" values="${sway.map(p => `${p[1] * Q} 0`).join(';')}" keyTimes="${sway.map(p => k(p[0])).join(';')}"/></g>`
+  const sway: [number, number][] = [[11.8, 0], [12.25, 1], [13.05, -1], [13.85, 1], [14.35, 0]]
+  let scr = `<g>${bobLocutus()}${bobRamp([[10.0, 1], [tFull, 0.45], [12.6, 0.45], [14.0, 1]])}${bobTween('translate', sway.map(([t, v]) => [t, `${v * Q} 0`]))}</g>`
   // the beam leaving the ship and reaching steadily up the screen towards him
   // (the full wedge, uncovered from the bottom up by a rising clip edge)
   const reveal = `<animate attributeName="y" dur="${T}s" repeatCount="indefinite" values="${25 * Q};${25 * Q};${8 * Q};${8 * Q}" keyTimes="0;${k(tBeam)};${k(tBeamFull)};1"/>`
@@ -236,7 +254,7 @@ function bestOfBothWorldsHD() {
   scr += `<g opacity="0">${bobInterference()}${bobRamp([[11.3, 0], [12.3, 1], [13.2, 1], [14.4, 0]])}</g>`
   // scanlines, slow and faint, and a soft rolling bar
   scr += `<rect x="${BOB_SX * Q}" y="${BOB_SY * Q}" width="${BOB_SW * Q}" height="${BOB_SH * Q}" fill="url(#bobScan)"/>`
-  scr += `<rect x="${BOB_SX * Q}" y="0" width="${BOB_SW * Q}" height="6" fill="#c8ffd8" opacity="0.04"><animate attributeName="y" values="${BOB_SY * Q - 6};${(BOB_SY + BOB_SH) * Q}" dur="6.5s" repeatCount="indefinite"/></rect>`
+  scr += `<rect x="${BOB_SX * Q}" y="0" width="${BOB_SW * Q}" height="6" fill="#c8ffd8" opacity="0.04"><animate attributeName="y" values="${BOB_SY * Q - 6};${(BOB_SY + BOB_SH) * Q}" dur="${(SCENE_SECONDS / 3).toFixed(3)}s" repeatCount="indefinite"/></rect>`
   // glass glint
   scr += `<polygon points="${30 * Q},${3 * Q} ${36 * Q},${3 * Q} ${30 * Q},${9 * Q}" fill="#ffffff" opacity="0.06"/>`
   s += `<g clip-path="url(#bobScreen)">${scr}</g>`
@@ -264,12 +282,14 @@ function bestOfBothWorldsHD() {
   }
   // he lifts his claw on the order, then brings it down on the console
   const press: [number, number][] = [[tPress, tPressEnd]]
-  s += crabHD(BOB_WORF, wx, wy, 'right', T, { left: [], right: [[tWorfReady, tPress]] }, [], 4.7, worfDetails)
-  const pr = new Pix().rows(
-    ['SSS....', 'sSSS...', '..sSS..', '...SS..', '..LSSL.', '..S..S.'],
-    wx + 18, wy + 4,
-    { S: BOB_WORF.skin, s: BOB_WORF.shade, L: BOB_WORF.light },
-  )
+  s += crabHD(BOB_WORF, wx, wy, 'right', T, { left: [], right: [] }, [], T / 4, worfDetails)
+  const IN = '0.55 0 0.85 0.4'
+  s += bobArmRise('bobWorfArm', BOB_WORF, wx, wy, [[tWorfReady, 12], [tWorfReady + 0.27, 0, '0.25 0.6 0.4 1'], [tPress - 0.17, 0], [tPress - 0.03, 12, IN]])
+  const prPal = { S: BOB_WORF.skin, s: BOB_WORF.shade, L: BOB_WORF.light }
+  const prTop = new Pix().rows(['SSS....', 'sSSS...'], wx + 18, wy + 4, prPal)
+  const pr = new Pix().rows(['..sSS..', '...SS..', '..LSSL.', '..S..S.'], wx + 18, wy + 6, prPal)
+  // the reach down to the console slides out from under the shoulder (clipped)
+  const prSlide = `<clipPath id="bobPressClip"><rect x="${(wx + 18) * Q}" y="${(wy + 6) * Q}" width="${7 * Q}" height="${4 * Q}"/></clipPath><g clip-path="url(#bobPressClip)"><g transform="translate(0 ${-4 * Q})">${pr.svg()}${bobTween('translate', [[tPress - 0.07, `0 ${-4 * Q}`], [tPress + 0.05, '0 0', IN], [tPressEnd, '0 0'], [tPressEnd + 0.22, `0 ${-4 * Q}`]])}</g></g>`
 
   // the tactical console in front of him
   const con = new Pix()
@@ -281,7 +301,8 @@ function bestOfBothWorldsHD() {
   // the fire button: a small warm glow that rises and slowly dies away
   s += bobR(28, 36, 2, 1, '#c0201c')
   s += `<g opacity="0">${bobR(27, 36, 4, 1, '#ffb070') + bobR(28, 36, 2, 1, '#ffe2c4')}<ellipse cx="${29 * Q}" cy="${36.5 * Q}" rx="7" ry="3" fill="#ffd0a0" opacity="0.4"/>${bobRamp([[tPress, 0], [tPress + 0.45, 1], [tPressEnd, 1], [tPressEnd + 1.0, 0]])}</g>`
-  s += shown(pr.svg(), press, T)
+  s += shown(prTop.svg(), [[tPress - 0.07, tPressEnd + 0.12]], T) + prSlide
+  void press
 
   // ---- Riker before the screen: stares at Locutus, turns to Worf, raises a claw, turns back
   const rx = 54
@@ -310,16 +331,14 @@ function bestOfBothWorldsHD() {
     return p.svg()
   }
   const raise: [number, number][] = [[tUp, tLower]]
-  s += crabHD(BOB_RIKER, rx, ry, 'right', T, { left: [], right: raise }, [], 3.7, rikerDetails)
-  s += shown(eyesAt([5, 6, 11, 12]), [[tTurn, tAtWorf], [tBackTurn, tAtScreen]], T)
-  s += shown(eyesAt([4, 5, 10, 11]), [[tAtWorf, tBackTurn]], T)
-  // the claw halfway up (on the way up, and on the way down)
-  const sk = BOB_RIKER
-  const half = new Pix()
-  half.rect(rx + 18, ry + 4, 3, 2, sk.skin).rect(rx + 20, ry + 1, 2, 3, sk.skin).rect(rx + 21, ry + 1, 1, 3, sk.shade)
-  half.rect(rx + 19, ry - 2, 1, 3, sk.skin).rect(rx + 22, ry - 2, 1, 3, sk.skin).rect(rx + 19, ry, 4, 1, sk.skin)
-  half.set(rx + 19, ry - 2, sk.light).set(rx + 22, ry - 2, sk.light)
-  s += shown(half.svg(), [[tHalf, tUp], [tLower, tDown]], T)
+  s += crabHD(BOB_RIKER, rx, ry, 'right', T, { left: [], right: [] }, [], T / 5, rikerDetails)
+  // while he turns: the eyes are lifted off the face and glide 2 px to Worf and back
+  const glide = new Pix()
+  for (const c of [6, 7, 12, 13]) glide.rect(rx + c, ry + 2, 1, 3, EYE_HD)
+  const eyesMove = `<g>${eyesAt([])}<g>${glide.svg()}${bobTween('translate', [[tTurn, '0 0'], [tAtWorf, `${-2 * Q} 0`], [tBackTurn, `${-2 * Q} 0`], [tAtScreen, '0 0']])}</g></g>`
+  s += shown(eyesMove, [[tTurn, tAtScreen]], T)
+  s += bobArmRise('bobRikerArm', BOB_RIKER, rx, ry, [[tHalf, 12], [tUp + 0.1, 0, '0.25 0.6 0.4 1'], [tLower, 0], [tDown, 12]])
+  void raise
 
   return s
 }

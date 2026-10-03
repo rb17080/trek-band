@@ -21,6 +21,10 @@ const FCH_T_BDOWN = 13.6 // and goes down again
 const FCH_T_BACK = 12.6 // Picard steps back (2 steps)
 const FCH_T_UP0 = 13.7 // cables start to withdraw...
 const FCH_T_UP1 = 15.5 // ...gone into the hatch
+const FCH_T_OUT = 15.5 // Picard backs out to where he came in (6 steps)
+const FCH_T_GONE0 = 15.6 // she dissolves back into the dark...
+const FCH_T_GONE1 = 16.9 // ...leaving the empty body, as at the start
+const FCH_AMB = (n: number) => +(SCENE_SECONDS / n).toFixed(4) // ambient loops that divide the story
 
 const FCH_PICARD: CrabHD = {
   skin: '#d97757',
@@ -45,37 +49,18 @@ const FCH_SUIT = { top: '#56636a', mid: '#171b1e', low: '#101315', shade: '#0a0c
 
 const fchK = (t: number) => +(t / FCH_DUR).toFixed(4)
 
-// Piecewise-eased track of whole art pixels, written as a discrete translate
+// Smooth eased translate through [time, value] points (art pixels) on one axis
+const FCH_EASE = '0.42 0 0.58 1'
 function fchTrack(pts: [number, number][], axis: 'x' | 'y', dur: number) {
-  const times: number[] = []
-  const vals: string[] = []
-  let last: number | null = null
-  for (let i = 0; i <= dur * 50; i++) {
-    const t = i / 50
-    let v = pts[pts.length - 1][1]
-    for (let k = 0; k < pts.length - 1; k++) {
-      const [t0, v0] = pts[k]
-      const [t1, v1] = pts[k + 1]
-      if (t >= t0 && t < t1) {
-        const u = (t - t0) / (t1 - t0)
-        const e = u * u * (3 - 2 * u)
-        v = v0 + (v1 - v0) * e
-        break
-      }
-    }
-    const r = Math.round(v)
-    if (r !== last && t < dur) {
-      times.push(t / dur)
-      vals.push(axis === 'x' ? `${r * Q} 0` : `0 ${r * Q}`)
-      last = r
-    }
-  }
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${times.map(t => +t.toFixed(4)).join(';')}"/>`
+  const vals = pts.map(([, v]) => (axis === 'x' ? `${v * Q} 0` : `0 ${v * Q}`))
+  const times = pts.map(([t]) => +(t / dur).toFixed(4))
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${times.join(';')}" keySplines="${pts.slice(1).map(() => FCH_EASE).join(';')}"/>`
 }
 
-// Discrete translate through explicit keys [time, x, y] (art pixels)
-function fchKeys(keys: [number, number, number][]) {
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${FCH_DUR}s" repeatCount="indefinite" values="${keys.map(([, x, y]) => `${x * Q} ${y * Q}`).join(';')}" keyTimes="${keys.map(([t]) => fchK(t)).join(';')}"/>`
+// Spline translate through explicit keys [time, x, y, spline into this key] (art pixels)
+function fchKeys(keys: [number, number, number, string?][]) {
+  const all = keys[keys.length - 1][0] < FCH_DUR ? [...keys, [FCH_DUR, keys[keys.length - 1][1], keys[keys.length - 1][2]] as [number, number, number]] : keys
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${FCH_DUR}s" repeatCount="indefinite" values="${all.map(([, x, y]) => `${x * Q} ${y * Q}`).join(';')}" keyTimes="${all.map(([t]) => fchK(t)).join(';')}" keySplines="${all.slice(1).map(k => k[3] || FCH_EASE).join(';')}"/>`
 }
 
 // Smooth opacity ramp on the story timeline: [time, opacity] points
@@ -100,7 +85,7 @@ function fchFly(shape: string, x: number, y: number, path: string, t0: number, l
   const b = fchK(t0 + life)
   const op = fade
     ? `<animate attributeName="opacity" dur="${FCH_DUR}s" repeatCount="indefinite" values="0;0;0.42;0;0" keyTimes="0;${a};${fchK(t0 + 0.35)};${b};1"/>`
-    : `<animate attributeName="opacity" calcMode="discrete" dur="${FCH_DUR}s" repeatCount="indefinite" values="0;1;0" keyTimes="0;${a};${b}"/>`
+    : `<animate attributeName="opacity" dur="${FCH_DUR}s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;${a};${fchK(t0 + 0.08)};${fchK(t0 + life * 0.6)};${b};1"/>`
   return `<g transform="translate(${x * Q} ${y * Q})"><g opacity="0">${shape}<animateMotion path="${path}" dur="${FCH_DUR}s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;${a};${b};1"/>${op}</g></g>`
 }
 
@@ -170,20 +155,35 @@ function fchBackground(W: number, H: number) {
 
   // indicator lights in the wall plates, breathing slowly (single art pixels)
   lights.forEach(([x, y], i) => {
-    back += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#5dff8a"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="${2.6 + (i % 5) * 0.45}s" begin="${(i * 0.37) % 2.3}s" repeatCount="indefinite"/></rect>`
+    back += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#5dff8a"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="${FCH_AMB(4 + (i % 3))}s" begin="-${((i * 0.37) % 2.3).toFixed(2)}s" repeatCount="indefinite"/></rect>`
   })
   return back
 }
 
-// Her left arm (toward Picard), raised: 'mid' is half way, 'curl' bends the claw tips in
-function fchArmLeft(x: number, y: number, pose: 'mid' | 'up' | 'curl') {
+// Her left arm (toward Picard). Raising: 'low' -> 'mid' -> 'high' -> 'up';
+// beckoning: 'up' -> 'half' (tips bending) -> 'curl' (tips folded toward her)
+type FchArm = 'low' | 'mid' | 'high' | 'up' | 'half' | 'curl'
+function fchArmLeft(x: number, y: number, pose: FchArm) {
   const k = FCH_QUEEN
   const p = new Pix()
   p.rect(x - 3, y + 4, 3, 2, k.skin)
+  if (pose === 'low') {
+    p.rect(x - 4, y + 2, 2, 3, k.skin).rect(x - 4, y + 2, 1, 3, k.shade)
+    p.rect(x - 6, y + 1, 4, 1, k.skin).rect(x - 6, y - 1, 1, 2, k.skin).rect(x - 3, y - 1, 1, 2, k.skin)
+    p.set(x - 6, y - 1, k.light).set(x - 3, y - 1, k.light)
+    return p.svg()
+  }
   if (pose === 'mid') {
     p.rect(x - 5, y + 1, 2, 4, k.skin).rect(x - 5, y + 1, 1, 4, k.shade)
     p.rect(x - 7, y - 2, 1, 2, k.skin).rect(x - 4, y - 2, 1, 2, k.skin)
     p.rect(x - 7, y, 4, 1, k.skin).set(x - 7, y - 2, k.light).set(x - 4, y - 2, k.light)
+    return p.svg()
+  }
+  if (pose === 'high') {
+    p.rect(x - 4, y - 2, 2, 7, k.skin).rect(x - 4, y - 2, 1, 7, k.shade)
+    p.rect(x - 6, y - 3, 4, 1, k.skin).rect(x - 5, y - 2, 2, 1, k.skin)
+    p.rect(x - 6, y - 5, 1, 2, k.skin).rect(x - 3, y - 5, 1, 2, k.skin)
+    p.set(x - 6, y - 5, k.light).set(x - 3, y - 5, k.light)
     return p.svg()
   }
   const ax = x - 3
@@ -193,6 +193,10 @@ function fchArmLeft(x: number, y: number, pose: 'mid' | 'up' | 'curl') {
   if (pose === 'up') {
     p.rect(cx, y - 8, 1, 3, k.skin).rect(cx + 3, y - 8, 1, 3, k.skin)
     p.set(cx, y - 8, k.light).set(cx + 3, y - 8, k.light)
+  } else if (pose === 'half') {
+    // tips starting to bend: shorter, lit tip still on top
+    p.rect(cx, y - 7, 1, 2, k.skin).rect(cx + 3, y - 7, 1, 2, k.skin)
+    p.set(cx, y - 7, k.light).set(cx + 3, y - 7, k.light)
   } else {
     // tips folded toward her: a come-here curl
     p.rect(cx, y - 7, 1, 2, k.skin).rect(cx + 3, y - 7, 1, 2, k.skin)
@@ -218,17 +222,25 @@ function fchQueenBody(x: number, y: number) {
   let s = p.svg()
   // the open socket waiting for her spine; its glow dies away once she is seated
   const sock = new Pix().rect(x + 6, y + 5, 6, 1, '#020403').rect(x + 7, y + 6, 4, 1, '#020403').rect(x + 8, y + 5, 2, 1, '#3cff7a')
-  s += `<g>${sock.svg()}${fchFade([[FCH_T_LOCK, 1], [FCH_T_LOCK + 0.8, 0]])}</g>`
+  s += `<g>${sock.svg()}${fchFade([[FCH_T_LOCK, 1], [FCH_T_LOCK + 0.8, 0], [FCH_T_GONE0 + 0.7, 0], [FCH_T_GONE1 + 0.1, 1]])}</g>`
   // arms: limp until she is whole, then at rest; the left one beckons Picard
   const B = FCH_T_BECK
   const D = FCH_T_BDOWN
-  const limp = new Pix().rect(x - 3, y + 6, 3, 2, k.skin).rect(x - 3, y + 8, 3, 1, k.shade).rect(x + 18, y + 6, 3, 2, k.skin).rect(x + 18, y + 8, 3, 1, k.shade)
-  s += shown(limp.svg(), [[0, FCH_T_ARMS]], FCH_DUR)
-  s += shown(armRestHD(k, x, y, 'right'), [[FCH_T_ARMS, FCH_DUR]], FCH_DUR)
-  s += shown(armRestHD(k, x, y, 'left'), [[FCH_T_ARMS, B], [D + 0.3, FCH_DUR]], FCH_DUR)
-  s += shown(fchArmLeft(x, y, 'mid'), [[B, B + 0.3], [D, D + 0.3]], FCH_DUR)
-  s += shown(fchArmLeft(x, y, 'up'), [[B + 0.3, B + 0.75], [B + 1.15, B + 1.4], [B + 1.75, D]], FCH_DUR)
-  s += shown(fchArmLeft(x, y, 'curl'), [[B + 0.75, B + 1.15], [B + 1.4, B + 1.75]], FCH_DUR)
+  // limp (2 px low) until she is whole, then both arms lift smoothly to rest
+  const A = FCH_T_ARMS
+  const lift = fchKeys([[0, 0, 2], [A - 0.15, 0, 2], [A + 0.25, 0, 0], [FCH_T_GONE0 + 0.5, 0, 0], [FCH_T_GONE1, 0, 2]])
+  s += `<g>${armRestHD(k, x, y, 'right')}${lift}</g>`
+  s += `<g>${shown(armRestHD(k, x, y, 'left'), [[0, B], [D + 0.3, FCH_DUR]], FCH_DUR)}${lift}</g>`
+  const st = 0.1
+  s += shown(fchArmLeft(x, y, 'low'), [[B, B + st], [D + 2 * st, D + 3 * st]], FCH_DUR)
+  s += shown(fchArmLeft(x, y, 'mid'), [[B + st, B + 2 * st], [D + st, D + 2 * st]], FCH_DUR)
+  s += shown(fchArmLeft(x, y, 'high'), [[B + 2 * st, B + 3 * st], [D, D + st]], FCH_DUR)
+  const h = 0.09
+  const curls: [number, number][] = [[B + 0.75, B + 1.15], [B + 1.4, B + 1.75]]
+  const up: [number, number][] = [[B + 0.3, curls[0][0] - h / 2], [curls[0][1] + h / 2, curls[1][0] - h / 2], [curls[1][1] + h / 2, D]]
+  s += shown(fchArmLeft(x, y, 'up'), up, FCH_DUR)
+  s += shown(fchArmLeft(x, y, 'half'), curls.flatMap(([a, b]) => [[a - h / 2, a + h / 2], [b - h / 2, b + h / 2]] as [number, number][]), FCH_DUR)
+  s += shown(fchArmLeft(x, y, 'curl'), curls.map(([a, b]) => [a + h / 2, b - h / 2] as [number, number]), FCH_DUR)
   return s
 }
 
@@ -298,13 +310,22 @@ function fchQueenHead(x: number, y: number) {
   // eyes: closed while she is carried, open ahead, then turned to Picard (one slow blink)
   const O = FCH_T_OPEN
   const T = FCH_T_TURN
-  s += shown(new Pix().rect(x + 5, y + 3, 2, 1, '#4b514b').rect(x + 11, y + 3, 2, 1, '#4b514b').svg(), [[0, O]], FCH_DUR)
-  s += shown(new Pix().rect(x + 5, y + 2, 2, 3, EYE_HD).rect(x + 11, y + 2, 2, 3, EYE_HD).svg(), [[O, T]], FCH_DUR)
-  s += shown(new Pix().rect(x + 3, y + 2, 2, 3, EYE_HD).rect(x + 9, y + 2, 2, 3, EYE_HD).svg(), [[T, 14.9], [15.05, FCH_DUR]], FCH_DUR)
-  s += shown(new Pix().rect(x + 3, y + 3, 2, 1, '#4b514b').rect(x + 9, y + 3, 2, 1, '#4b514b').svg(), [[14.9, 15.05]], FCH_DUR)
+  // eyes hgt (1..3) tall, bottom row at y + 4, left eye at offset ox; a lid line when closed
+  const eye = (ox: number, hgt: number) => new Pix().rect(x + ox, y + 5 - hgt, 2, hgt, EYE_HD).rect(x + ox + 6, y + 5 - hgt, 2, hgt, EYE_HD).svg()
+  const lid = (ox: number) => new Pix().rect(x + ox, y + 3, 2, 1, '#4b514b').rect(x + ox + 6, y + 3, 2, 1, '#4b514b').svg()
+  const e = 0.09
+  const K0 = 14.9 // the slow blink
+  s += shown(lid(5), [[0, O]], FCH_DUR)
+  s += shown(eye(5, 1), [[O, O + e]], FCH_DUR)
+  s += shown(eye(5, 2), [[O + e, O + 2 * e]], FCH_DUR)
+  s += shown(eye(5, 3), [[O + 2 * e, T]], FCH_DUR)
+  s += shown(eye(4, 3), [[T, T + e]], FCH_DUR)
+  s += shown(eye(3, 3), [[T + e, K0], [K0 + 0.27, FCH_DUR]], FCH_DUR)
+  s += shown(eye(3, 2), [[K0, K0 + 0.06], [K0 + 0.21, K0 + 0.27]], FCH_DUR)
+  s += shown(lid(3), [[K0 + 0.06, K0 + 0.21]], FCH_DUR)
   // red eyepiece: kindles slowly after the lock, then breathes gently
   const lit = new Pix().set(x + 15, y + 2, '#ff3b3b').set(x + 15, y + 3, '#b01c1c').svg()
-  const glow = `<circle cx="${(x + 15.5) * Q}" cy="${(y + 2.5) * Q}" r="5" fill="#ff3030" opacity="0.3"><animate attributeName="opacity" values="0.22;0.4;0.22" dur="3.2s" repeatCount="indefinite"/></circle>`
+  const glow = `<circle cx="${(x + 15.5) * Q}" cy="${(y + 2.5) * Q}" r="5" fill="#ff3030" opacity="0.3"><animate attributeName="opacity" values="0.22;0.4;0.22" dur="${FCH_AMB(5)}s" repeatCount="indefinite"/></circle>`
   s += `<g opacity="0">${glow}${lit}${fchFade([[FCH_T_EYE0, 0], [FCH_T_EYE1, 1]])}</g>`
   return s
 }
@@ -328,12 +349,12 @@ function firstContactHD() {
 
   let back = fchBackground(W, H)
   // green haze drifting slowly through the chamber
-  back += `<ellipse cx="${30 * Q}" cy="${26 * Q}" rx="70" ry="26" fill="url(#fchHaze)" opacity="0.6"><animate attributeName="cx" values="${26 * Q};${36 * Q};${26 * Q}" dur="12s" repeatCount="indefinite"/></ellipse>`
+  back += `<ellipse cx="${30 * Q}" cy="${26 * Q}" rx="70" ry="26" fill="url(#fchHaze)" opacity="0.6"><animate attributeName="cx" values="${26 * Q};${36 * Q};${26 * Q}" dur="${FCH_AMB(1)}s" repeatCount="indefinite"/></ellipse>`
   back += `<rect x="0" y="${37 * Q}" width="${W}" height="${8 * Q}" fill="#3cff7a" opacity="0.05"/>`
   s += `<g mask="url(#fchFade)">${back}</g>`
 
   // the light pouring down from the hatch onto her body: steady, a very slow breath
-  s += `<polygon points="${60 * Q},${4 * Q} ${78 * Q},${4 * Q} ${88 * Q},${42 * Q} ${50 * Q},${42 * Q}" fill="url(#fchBeamG)" opacity="0.9"><animate attributeName="opacity" values="0.86;0.96;0.86" dur="7s" repeatCount="indefinite"/></polygon>`
+  s += `<polygon points="${60 * Q},${4 * Q} ${78 * Q},${4 * Q} ${88 * Q},${42 * Q} ${50 * Q},${42 * Q}" fill="url(#fchBeamG)" opacity="0.9"><animate attributeName="opacity" values="0.86;0.96;0.86" dur="${FCH_AMB(2)}s" repeatCount="indefinite"/></polygon>`
   s += `<ellipse cx="${69 * Q}" cy="${34 * Q}" rx="44" ry="30" fill="url(#fchHaze)" opacity="0.65"/>`
 
   // the dais she stands on
@@ -343,8 +364,8 @@ function firstContactHD() {
 
   // floor vent breathing steam between them
   for (let i = 0; i < 3; i++) {
-    const d = 4.2 + i * 0.8
-    s += `<g transform="translate(${46 * Q} ${40 * Q})"><g opacity="0">${fchPuff('#9fc7aa', i === 1)}<animateMotion path="M0 0 q ${i % 2 ? 6 : -4} -10 ${i % 2 ? 2 : 5} -24" dur="${d}s" begin="${i * 1.4}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.28;0" dur="${d}s" begin="${i * 1.4}s" repeatCount="indefinite"/></g></g>`
+    const d = FCH_AMB(i ? 3 : 4)
+    s += `<g transform="translate(${46 * Q} ${40 * Q})"><g opacity="0">${fchPuff('#9fc7aa', i === 1)}<animateMotion path="M0 0 q ${i % 2 ? 6 : -4} -10 ${i % 2 ? 2 : 5} -24" dur="${d}s" begin="-${i * 1.4 + 0.9}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.28;0" dur="${d}s" begin="-${i * 1.4 + 0.9}s" repeatCount="indefinite"/></g></g>`
   }
   s += new Pix().rect(44, 41, 5, 1, '#1d3a26').set(45, 41, '#0a140d').set(47, 41, '#0a140d').svg()
 
@@ -361,22 +382,23 @@ function firstContactHD() {
       p.set(px0 + 1, 28, '#cf8a6a').set(px0 + 16, 28, '#e6b08a')
     },
   )
-  const walk: [number, number, number][] = [[0, -21, 0]]
-  for (let i = 0; i < 7; i++) {
-    const t = FCH_T_WALK + i * 0.32
-    const x = -21 + 3 * (i + 1)
-    walk.push([t, x, -1], [t + 0.16, x, 0])
-  }
+  // forward glide (7 steps), then two steps back; each step bobs him up 1 px and down
   const bk = FCH_T_BACK
-  walk.push([bk, -1, -1], [bk + 0.16, -1, 0], [bk + 0.42, -3, -1], [bk + 0.58, -3, 0])
-  s += `<g>${pic}${fchKeys(walk)}</g>`
+  const glide = fchKeys([[0, -21, 0], [FCH_T_WALK - 0.05, -21, 0], [FCH_T_WALK + 2.2, 0, 0, '0.3 0 0.6 1'], [bk - 0.05, 0, 0], [bk + 0.6, -3, 0, '0.3 0 0.5 1'], [FCH_T_OUT, -3, 0], [FCH_T_OUT + 1.6, -21, 0, '0.35 0 0.6 1']])
+  const bob: [number, number, number, string?][] = [[0, 0, 0]]
+  const steps = [...Array.from({ length: 7 }, (_, i) => FCH_T_WALK + i * 0.32), bk, bk + 0.42, ...Array.from({ length: 6 }, (_, i) => FCH_T_OUT + 0.05 + i * 0.26)]
+  const UP = '0.2 0.6 0.4 1'
+  const DN = '0.6 0 0.8 0.4'
+  for (const t of steps) bob.push([t - 0.04, 0, 0], [t + 0.08, 0, -1, UP], [t + 0.26, 0, 0, DN])
+  s += `<g>${glide}<g>${pic}${fchKeys(bob)}</g></g>`
 
   // the Queen: cables, spine and tubes, body, then head, with a 1px settle on the lock
   let queen = fchHang(fchCables(qx, qy), [[0, -46], [FCH_T_DESC, -46], [FCH_T_LOCK, 0], [FCH_T_UP0, 0], [FCH_T_UP1, -46], [dur, -46]])
-  queen += `<g mask="url(#fchSpineM)">${fchHang(fchQueenBack(qx, qy), FCH_DOWN)}</g>`
+  const gone = fchFade([[FCH_T_GONE0, 1], [FCH_T_GONE1, 0]])
+  queen += `<g mask="url(#fchSpineM)"><g>${fchHang(fchQueenBack(qx, qy), FCH_DOWN)}${gone}</g></g>`
   queen += fchQueenBody(qx, qy)
-  queen += fchHang(fchQueenHead(qx, qy), FCH_DOWN)
-  s += `<g>${queen}${fchKeys([[0, 0, 0], [FCH_T_LOCK, 0, 1], [FCH_T_LOCK + 0.35, 0, 0]])}</g>`
+  queen += `<g>${fchHang(fchQueenHead(qx, qy), FCH_DOWN)}${gone}</g>`
+  s += `<g>${queen}${fchKeys([[0, 0, 0], [FCH_T_LOCK - 0.05, 0, 0], [FCH_T_LOCK + 0.1, 0, 1, '0.3 0 0.5 1'], [FCH_T_LOCK + 0.5, 0, 0]])}</g>`
 
   // the lock: a small local glow at the neck, a few sparks, soft steam both sides
   s += `<ellipse cx="${69 * Q}" cy="${33 * Q}" rx="12" ry="5" fill="url(#fchSpark)" opacity="0">${fchFade([[FCH_T_LOCK - 0.1, 0], [FCH_T_LOCK + 0.4, 0.8], [FCH_T_LOCK + 1.5, 0]])}</ellipse>`
@@ -402,6 +424,6 @@ function firstContactHD() {
   }
 
   // a faint scan line drifting down the chamber
-  s += `<rect x="0" y="0" width="${W}" height="${Q}" fill="#7dffa0" opacity="0.06"><animateTransform attributeName="transform" type="translate" values="0 0;0 ${H}" dur="6.5s" repeatCount="indefinite"/></rect>`
+  s += `<rect x="0" y="0" width="${W}" height="${Q}" fill="#7dffa0" opacity="0.06"><animateTransform attributeName="transform" type="translate" values="0 ${-Q};0 ${H}" dur="${FCH_AMB(3)}s" repeatCount="indefinite"/></rect>`
   return s
 }

@@ -117,14 +117,21 @@ function merge(list: [number, number][]): [number, number][] {
 
 const shown = (svg: string, on: [number, number][], dur: number) => `<g>${svg}${windows(merge(on), dur)}</g>`
 
+// A hop rises over ~0.14 s (easing out), holds, and lands over ~0.14 s (easing in)
+const EASE_OUT = '0.2 0.7 0.4 1'
+const EASE_IN = '0.6 0 0.8 0.3'
+const HOLD = '0 0 1 1'
 function hopQ(on: [number, number][], dur: number) {
-  const times = [0]
-  const vals = ['0 0']
-  for (const [a, b] of on) {
-    times.push(a / dur), vals.push(`0 ${-2 * Q}`)
-    times.push(b / dur), vals.push('0 0')
+  const pts: [number, number, string][] = [[0, 0, HOLD]] // time, y, spline into this point
+  for (const [a, b] of merge(on)) {
+    const r = Math.min(0.14, (b - a) / 3)
+    const t0 = Math.max(a - r / 2, pts[pts.length - 1][0] + 0.001)
+    pts.push([t0, 0, HOLD], [t0 + r, -2 * Q, EASE_OUT], [Math.max(b - r / 2, t0 + r + 0.001), -2 * Q, HOLD])
+    pts.push([Math.min(b + r / 2, dur), 0, EASE_IN])
   }
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${times.map(t => +t.toFixed(4)).join(';')}"/>`
+  if (pts[pts.length - 1][0] < dur) pts.push([dur, 0, HOLD])
+  const times = pts.map(([t]) => +(t / dur).toFixed(5))
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${dur}s" repeatCount="indefinite" values="${pts.map(([, y]) => `0 ${y}`).join(';')}" keyTimes="${times.join(';')}" keySplines="${pts.slice(1).map(([, , sp]) => sp).join(';')}"/>`
 }
 
 type Side = 'left' | 'right'
@@ -180,6 +187,33 @@ function armUpHD(k: CrabHD, x: number, y: number, side: Side) {
   return p.svg()
 }
 
+// Half-raised: the arm on a diagonal, between rest and up
+function armMidHD(k: CrabHD, x: number, y: number, side: Side) {
+  const p = new Pix()
+  const d = side === 'left' ? -1 : 1
+  const sx = side === 'left' ? x - 3 : x + 18
+  p.rect(sx, y + 4, 3, 2, k.skin)
+  for (let i = 0; i < 4; i++) p.rect(sx + (side === 'left' ? -i : 1 + i), y + 2 - i, 2, 2, k.skin)
+  const cx = side === 'left' ? x - 8 : x + 21
+  p.rect(cx, y - 3, 1, 2, k.skin).rect(cx + 3, y - 3, 1, 2, k.skin).rect(cx, y - 1, 4, 1, k.skin)
+  p.set(cx, y - 3, k.light).set(cx + 3, y - 3, k.light)
+  void d
+  return p.svg()
+}
+
+// Each raised window split into rest -> half (0.09 s) -> up -> half (0.09 s) -> rest
+const ARM_STEP = 0.09
+function armPhases(on: [number, number][]) {
+  const up: [number, number][] = []
+  const mid: [number, number][] = []
+  for (const [a, b] of merge(on)) {
+    const st = Math.min(ARM_STEP, (b - a) / 3)
+    mid.push([a, a + st], [b - st, b])
+    up.push([a + st, b - st])
+  }
+  return { up, mid }
+}
+
 type Pose = { left: [number, number][]; right: [number, number][] }
 
 function crabHD(
@@ -198,11 +232,15 @@ function crabHD(
   let s = p.svg()
   s += shown(armRestHD(k, x, y, 'left'), complement(merge(pose.left), dur), dur)
   s += shown(armRestHD(k, x, y, 'right'), complement(merge(pose.right), dur), dur)
-  if (pose.left.length) s += shown(armUpHD(k, x, y, 'left'), pose.left, dur)
-  if (pose.right.length) s += shown(armUpHD(k, x, y, 'right'), pose.right, dur)
+  for (const side of ['left', 'right'] as const) {
+    if (!pose[side].length) continue
+    const { up, mid } = armPhases(pose[side])
+    s += shown(armMidHD(k, x, y, side), mid, dur)
+    s += shown(armUpHD(k, x, y, side), up, dur)
+  }
   const lids = new Pix()
   ex.forEach(e => lids.rect(x + e, y + 2, 2, 3, k.skin))
-  s += `<g opacity="0">${lids.svg()}<animate attributeName="opacity" calcMode="discrete" dur="${blinkEvery}s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.92;0.95"/></g>`
+  s += `<g opacity="0">${lids.svg()}<animate attributeName="opacity" calcMode="discrete" dur="${(SCENE_SECONDS / Math.max(1, Math.round(SCENE_SECONDS / blinkEvery))).toFixed(4)}s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.92;0.95"/></g>`
   return `<g>${s}${hops.length ? hopQ(hops, dur) : ''}</g>`
 }
 
@@ -236,19 +274,77 @@ const DATHON_HD: CrabHD = {
 // a 1 px rise, and blinks placed by hand.
 type DkArms = { half: [number, number][]; up: [number, number][] }
 
-function dkArmHalf(k: CrabHD, x: number, y: number, side: Side) {
-  const p = new Pix()
+// A raised arm, fully up (the same art as armUpHD), split into the shoulder that stays put
+// and the arm + claw that slide: lowered 4 px it is the half-raise.
+function dkArmV(k: CrabHD, x: number, y: number, side: Side) {
   const ax = side === 'left' ? x - 3 : x + 19
-  p.rect(side === 'left' ? x - 3 : x + 18, y + 4, 3, 2, k.skin)
-  p.rect(ax, y, 2, 4, k.skin)
-  p.rect(side === 'left' ? ax : ax + 1, y, 1, 4, k.shade)
+  const shoulder = new Pix().rect(side === 'left' ? x - 3 : x + 18, y + 4, 3, 2, k.skin).svg()
+  const p = new Pix()
+  p.rect(ax, y - 4, 2, 8, k.skin)
+  p.rect(side === 'left' ? ax : ax + 1, y - 4, 1, 8, k.shade)
   const cx = side === 'left' ? x - 4 : x + 18
-  p.rect(cx, y - 4, 1, 3, k.skin).rect(cx + 3, y - 4, 1, 3, k.skin)
-  p.rect(cx, y - 2, 4, 1, k.skin).rect(cx + 1, y - 1, 2, 1, k.skin)
-  p.set(cx, y - 4, k.light).set(cx + 3, y - 4, k.light)
-  return p.svg()
+  const cy = y - 8
+  p.rect(cx, cy, 1, 3, k.skin).rect(cx + 3, cy, 1, 3, k.skin)
+  p.rect(cx, cy + 2, 4, 1, k.skin).rect(cx + 1, cy + 3, 2, 1, k.skin)
+  p.set(cx, cy, k.light).set(cx + 3, cy, k.light)
+  return { shoulder, arm: p.svg(), clip: [cx - 1, y + 4] }
 }
 
+// The arm moves toward where the story wants it, one stage every DK_STEP s:
+// 0 rest, 1 diagonal, 2 half-raised, 3-6 sliding up one px per stage (6 = fully up).
+// Rest, diagonal and raised are drawings; from half to fully up the arm glides.
+const DK_STEP = 0.08
+function dkArmPlan(a: DkArms, T: number) {
+  const inside = (w: [number, number][], t: number) => w.some(([t0, t1]) => t >= t0 && t < t1)
+  const target = (t: number) => (inside(a.up, t) ? 6 : inside(a.half, t) ? 2 : 0)
+  const times = [...a.half, ...a.up].flat().sort((p, q) => p - q)
+  const steps: [number, number, number][] = [] // time, from, to
+  let lvl = 0
+  let t = 0
+  while (t < T) {
+    const want = target(t)
+    if (want === lvl) {
+      const next = times.find(x => x > t + 1e-9)
+      if (next === undefined) break
+      t = next
+      continue
+    }
+    const to = lvl + (want > lvl ? 1 : -1)
+    steps.push([t, lvl, to])
+    lvl = to
+    t = +(t + DK_STEP).toFixed(4)
+  }
+  // which drawing is up: 0 rest, 1 diagonal, 2 raised
+  const show: [number, number][][] = [[], [], []]
+  let from = 0
+  let cur = 0
+  for (const [t0, , to] of steps) {
+    const d = Math.min(to, 2)
+    if (d !== cur) {
+      show[cur].push([from, t0])
+      from = t0
+      cur = d
+    }
+  }
+  show[cur].push([from, T])
+  // the glide: 4 px down at half, 0 at fully up, eased at the start and end of each run
+  const pts: [number, number, string][] = [[0, 4, '']]
+  const moves = steps.filter(([, f, to]) => f >= 2 && to >= 2)
+  moves.forEach(([t0, f, to], i) => {
+    const prev = moves[i - 1]
+    const next = moves[i + 1]
+    const first = !prev || Math.abs(prev[0] + DK_STEP - t0) > 1e-6 || Math.sign(prev[2] - prev[1]) !== Math.sign(to - f)
+    const last = !next || Math.abs(t0 + DK_STEP - next[0]) > 1e-6 || Math.sign(next[2] - next[1]) !== Math.sign(to - f)
+    const sp = first && last ? '0.4 0 0.6 1' : first ? '0.5 0 1 1' : last ? '0 0 0.5 1' : '0 0 1 1'
+    if (first) pts.push([t0, 6 - f, '0 0 1 1'])
+    pts.push([t0 + DK_STEP, 6 - to, sp])
+  })
+  pts.push([T, 4, '0 0 1 1'])
+  const glide = `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${T}s" repeatCount="indefinite" values="${pts.map(p => `0 ${p[1] * Q}`).join(';')}" keyTimes="${pts.map(p => +(p[0] / T).toFixed(5)).join(';')}" keySplines="${pts.slice(1).map(p => p[2]).join(';')}"/>`
+  return { show, glide }
+}
+
+let dkClipN = 0
 function dkCrab(
   k: CrabHD, x: number, y: number, look: Side,
   arms: { left: DkArms; right: DkArms },
@@ -263,10 +359,15 @@ function dkCrab(
   details(p)
   let s = p.svg()
   for (const side of ['left', 'right'] as Side[]) {
-    const a = arms[side]
-    s += shown(armRestHD(k, x, y, side), complement(merge([...a.half, ...a.up]), T), T)
-    if (a.half.length) s += shown(dkArmHalf(k, x, y, side), a.half, T)
-    if (a.up.length) s += shown(armUpHD(k, x, y, side), a.up, T)
+    const plan = dkArmPlan(arms[side], T)
+    s += shown(armRestHD(k, x, y, side), plan.show[0], T)
+    if (plan.show[1].length) s += shown(armMidHD(k, x, y, side), plan.show[1], T)
+    if (plan.show[2].length) {
+      const v = dkArmV(k, x, y, side)
+      const id = `dkClip${dkClipN++}`
+      s += `<clipPath id="${id}"><rect x="${v.clip[0] * Q}" y="0" width="${6 * Q}" height="${v.clip[1] * Q}"/></clipPath>`
+      s += shown(`${v.shoulder}<g clip-path="url(#${id})"><g>${v.arm}${plan.glide}</g></g>`, plan.show[2], T)
+    }
   }
   const eyes = (dy: number) => {
     const e = new Pix()
@@ -288,6 +389,7 @@ function dkCrab(
 }
 
 function darmok() {
+  dkClipN = 0
   const T0 = SCENE_SECONDS
   const W = GW * Q
   const H = GH * Q
@@ -312,10 +414,11 @@ function darmok() {
     }
   }
   ;[[30, 4], [46, 2], [58, 11], [20, 14], [86, 18]].forEach(([x, y], i) => {
+    const tw = (T0 / [7, 5, 4, 4, 3][i]).toFixed(4)
     const glow = new Pix()
     glow.set(x - 1, y, '#bfa8ee').set(x + 1, y, '#bfa8ee').set(x, y - 1, '#bfa8ee').set(x, y + 1, '#bfa8ee')
-    back += `<g>${glow.svg()}<animate attributeName="opacity" values="0.15;0.9;0.15" dur="${2.6 + i * 0.7}s" begin="${i * 0.6}s" repeatCount="indefinite"/></g>`
-    back += `<g>${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0.6;1;0.6" dur="${2.6 + i * 0.7}s" begin="${i * 0.6}s" repeatCount="indefinite"/></g>`
+    back += `<g>${glow.svg()}<animate attributeName="opacity" values="0.15;0.9;0.15" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" dur="${tw}s" begin="${-i * 0.6}s" repeatCount="indefinite"/></g>`
+    back += `<g>${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0.6;1;0.6" calcMode="spline" keyTimes="0;0.5;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1" dur="${tw}s" begin="${-i * 0.6}s" repeatCount="indefinite"/></g>`
   })
   // shooting star: crosses once, after the two understand each other
   {
@@ -360,12 +463,12 @@ function darmok() {
   s += `<g mask="url(#dkFade)">${back}</g>`
 
   // firelight on the ground and the two of them
-  s += `<ellipse cx="${51 * Q}" cy="${40 * Q}" rx="84" ry="30" fill="url(#dkGlow)"><animate attributeName="opacity" values="0.9;0.97;0.92;1;0.9" dur="4.3s" calcMode="spline" keyTimes="0;0.3;0.5;0.8;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1" repeatCount="indefinite"/></ellipse>`
+  s += `<ellipse cx="${51 * Q}" cy="${40 * Q}" rx="84" ry="30" fill="url(#dkGlow)"><animate attributeName="opacity" values="0.9;0.97;0.92;1;0.9" dur="${(T0 / 4).toFixed(4)}s" calcMode="spline" keyTimes="0;0.3;0.5;0.8;1" keySplines="0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1;0.4 0 0.6 1" repeatCount="indefinite"/></ellipse>`
 
   // smoke curling up from the fire
   for (let i = 0; i < 3; i++) {
-    const d = 4.5 + i
-    s += `<rect x="${50 * Q}" y="${23 * Q}" width="${3 * Q}" height="${2 * Q}" fill="#8a7fa0" opacity="0"><animateMotion path="M0 0 q 6 -12 2 -22 t 8 -22" dur="${d}s" begin="${i * 1.5}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.35;0" dur="${d}s" begin="${i * 1.5}s" repeatCount="indefinite"/></rect>`
+    const d = (T0 / [4, 3, 3][i]).toFixed(4)
+    s += `<rect x="${50 * Q}" y="${23 * Q}" width="${3 * Q}" height="${2 * Q}" fill="#8a7fa0" opacity="0"><animateMotion path="M0 0 q 6 -12 2 -22 t 8 -22" dur="${d}s" begin="${-i * 1.9}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.35;0" dur="${d}s" begin="${-i * 1.9}s" repeatCount="indefinite"/></rect>`
   }
 
   // stones and crossed logs
@@ -389,13 +492,33 @@ function darmok() {
     ['.....y......', '.....y......', '.....yy.....', '....oyy.....', '....oyyo.y..', '...ooywo.o..', '...oywwyoo..', '..ooywwyyo..', '.roooywwyoo.', '.rooyywwyyor', 'rrooyywwyoor', '.rroooyyoorr', '.RrrrooooorR', '..RRRrrrrRR.'],
     ['.......y....', '......yy....', '......oy.y..', '.....ooy.y..', '....ooyyo...', '.o..ooyyoo..', '.o.ooywyoo..', '..ooyywwyoo.', '.ooyywwwyyo.', 'rooyywwwyyor', 'roooywwyyoor', 'rrooyyyyoorr', 'RrrooooooorR', '.RRrrrrrrRR.'],
   ]
-  frames.forEach((f, i) => {
-    s += shown(new Pix().rows(f, 45, 25, pal).svg(), [[i * 0.16, (i + 1) * 0.16]], 0.64)
-  })
+  // each drawing melts into the next: the incoming one fades in on top, then the one
+  // beneath fades away, so the fire never thins. The first drawing is repeated on top
+  // to close the loop, and the loop divides the story so the restart is seamless.
+  {
+    const FD = T0 / 17 // ~1.01 s for all four drawings
+    const S = FD / 4
+    const F = 0.11
+    const k = (t: number) => +(t / FD).toFixed(4)
+    const ease = '0.4 0 0.6 1'
+    const op = (vals: number[], ts: number[]) =>
+      `<animate attributeName="opacity" calcMode="spline" dur="${FD.toFixed(4)}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${ts.map(k).join(';')}" keySplines="${vals.slice(1).map(() => ease).join(';')}"/>`
+    const art = (i: number) => new Pix().rows(frames[i], 45, 25, pal).svg()
+    // drawing 0 at the bottom: full at the start, fades once drawing 1 is in
+    s += `<g>${`<g id="dkFl0">${art(0)}</g>`}${op([1, 1, 0, 0], [0, S, S + F, FD])}</g>`
+    for (let i = 1; i < 4; i++) {
+      const a = i * S
+      const b = (i + 1) * S
+      if (i < 3) s += `<g opacity="0">${art(i)}${op([0, 0, 1, 1, 0, 0], [0, a - F, a, b, b + F, FD])}</g>`
+      else s += `<g opacity="0">${art(i)}${op([1, 0, 0, 1, 1], [0, F, a - F, a, FD])}</g>`
+    }
+    // drawing 0 again on top, fading in at the end of the loop and away just after its start
+    s += `<g opacity="0"><use href="#dkFl0"/>${op([1, 0, 0, 1], [0, F, FD - F, FD])}</g>`
+  }
   // embers
   for (let i = 0; i < 5; i++) {
-    const d = 2 + i * 0.45
-    s += `<rect x="${51 * Q}" y="${25 * Q}" width="${Q}" height="${Q}" fill="${i % 2 ? '#ffd36b' : '#ff9a4a'}" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 8 : -8} -14 ${i % 2 ? -3 : 4} -28 t ${i % 2 ? 6 : -6} -18" dur="${d}s" begin="${i * 0.5}s" repeatCount="indefinite"/><animate attributeName="opacity" values="1;0.8;0" dur="${d}s" begin="${i * 0.5}s" repeatCount="indefinite"/></rect>`
+    const d = (T0 / [9, 7, 6, 5, 4][i]).toFixed(4)
+    s += `<rect x="${51 * Q}" y="${25 * Q}" width="${Q}" height="${Q}" fill="${i % 2 ? '#ffd36b' : '#ff9a4a'}" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 8 : -8} -14 ${i % 2 ? -3 : 4} -28 t ${i % 2 ? 6 : -6} -18" dur="${d}s" begin="${-i * 0.5}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;1;0.8;0" keyTimes="0;0.08;0.5;1" dur="${d}s" begin="${-i * 0.5}s" repeatCount="indefinite"/></rect>`
   }
 
   // Dathon, Tamarian ridges and robe, a dagger at his belt
@@ -444,7 +567,9 @@ function darmok() {
 // stars drifting past the window. Picard walks in, pauses by his chair while the others
 // look up, sits, takes the deck, shuffles and deals one card to each in turn. Riker
 // picks up and grins, Data tilts his head, Worf scowls and pushes his chips into the
-// pot, Picard looks at his own card and smiles. Calm tableau to the end.
+// pot, Picard looks at his own card and smiles. A calm tableau; then the cards go down,
+// the chips go back and Picard fades from his chair, so the loop starts where it began.
+// All motion is eased tweens; pose changes step through in-between drawings.
 
 const AGT_RIKER: CrabHD = {
   skin: '#d97757', light: '#eb9575', shade: '#b85f43',
@@ -470,6 +595,41 @@ const AGT_CARD_W = '#f2ece0'
 const AGT_CARD_R = '#b02a36'
 const AGT_GOLD = '#e8c547'
 
+// ---------- smooth tracks on the story timeline ----------
+const AGT_T = SCENE_SECONDS
+const AGT_EASE = '0.4 0 0.2 1'
+const agtKT = (t: number) => +(t / AGT_T).toFixed(5)
+
+// A transform tween through [time, value] keys (values in user units), eased between
+// keys that differ and held between keys that match
+function agtTf(type: string, pts: [number, string][], ease = AGT_EASE) {
+  const all = [...pts]
+  if (all[0][0] > 0) all.unshift([0, all[0][1]])
+  if (all[all.length - 1][0] < AGT_T) all.push([AGT_T, all[all.length - 1][1]])
+  const sp = all.slice(1).map(([, v], i) => (v === all[i][1] ? '0 0 1 1' : ease))
+  return `<animateTransform attributeName="transform" type="${type}" calcMode="spline" dur="${AGT_T}s" repeatCount="indefinite" values="${all.map(p => p[1]).join(';')}" keyTimes="${all.map(p => agtKT(p[0])).join(';')}" keySplines="${sp.join(';')}"/>`
+}
+// translate in art pixels
+const agtMove = (pts: [number, number, number][], ease = AGT_EASE) => agtTf('translate', pts.map(([t, x, y]) => [t, `${x * Q} ${y * Q}`] as [number, string]), ease)
+
+// An opacity track, linear between [time, value] keys
+function agtOp(pts: [number, number][]) {
+  const all = [...pts]
+  if (all[0][0] > 0) all.unshift([0, all[0][1]])
+  if (all[all.length - 1][0] < AGT_T) all.push([AGT_T, all[all.length - 1][1]])
+  return `<animate attributeName="opacity" dur="${AGT_T}s" repeatCount="indefinite" values="${all.map(p => p[1]).join(';')}" keyTimes="${all.map(p => agtKT(p[0])).join(';')}"/>`
+}
+// Visible inside each window, fading in and out over f seconds
+function agtFadeWin(on: [number, number][], f = 0.12) {
+  const pts: [number, number][] = [[0, on[0][0] <= 0 ? 1 : 0]]
+  for (const [a, b] of on) {
+    if (a > 0) pts.push([a, 0], [a + f, 1])
+    if (b < AGT_T) pts.push([b - f, 1], [b, 0])
+  }
+  return agtOp(pts)
+}
+const agtFaded = (svg: string, on: [number, number][], f = 0.12) => `<g opacity="0">${svg}${agtFadeWin(on, f)}</g>`
+
 // Clawd's body without legs (they are under the table), lit from the lamp side
 function agtBody(k: CrabHD, x: number, y: number, look: Side, lit: Side) {
   const p = new Pix()
@@ -489,18 +649,10 @@ function agtBody(k: CrabHD, x: number, y: number, look: Side, lit: Side) {
   return { p, ex }
 }
 
-// Pixel-art head tilt: shear the columns so the right side rises (no blur)
-function agtShear(p: Pix, x0: number) {
-  const out = new Pix()
-  const m = (p as any).m as Map<number, Map<number, string>>
-  for (const [y, row] of m) for (const [x, c] of row) out.set(x, y + 1 - Math.floor((x - x0) / 6), c)
-  return out
-}
-
-// Claws resting on the table edge in front of the body
-function agtNub(k: CrabHD, x: number, side: Side) {
+// Claws resting on the table edge in front of the body (dy -1: lifting off it)
+function agtNub(k: CrabHD, x: number, side: Side, dy = 0) {
   const cx = side === 'left' ? x + 1 : x + 14
-  return new Pix().rect(cx, 35, 3, 1, k.light).rect(cx, 36, 3, 1, k.skin).set(side === 'left' ? cx : cx + 2, 36, k.shade).svg()
+  return new Pix().rect(cx, 35 + dy, 3, 1, k.light).rect(cx, 36 + dy, 3, 1, k.skin).set(side === 'left' ? cx : cx + 2, 36 + dy, k.shade).svg()
 }
 
 const agtLids = (k: CrabHD, x: number, y: number, ex: number[], period: number, at: number) => {
@@ -536,14 +688,6 @@ function agtChips(p: Pix, x: number, yb: number, cols: string[]) {
   return p
 }
 
-// Discrete translate through a list of [time, dx, dy] steps (art pixels)
-function agtSteps(steps: [number, number, number][], dur: number) {
-  const kt = steps.map(s => +(s[0] / dur).toFixed(4))
-  const vals = steps.map(s => `${s[1] * Q} ${s[2] * Q}`)
-  if (kt[0] !== 0) kt.unshift(0), vals.unshift(vals[0])
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${kt.join(';')}"/>`
-}
-
 // The frame between resting and raised: arm half up, claw open
 function agtArmMid(k: CrabHD, x: number, y: number, side: Side) {
   const p = new Pix()
@@ -553,6 +697,23 @@ function agtArmMid(k: CrabHD, x: number, y: number, side: Side) {
   p.rect(cx, y, 2, 4, k.skin).rect(side === 'left' ? cx : cx + 1, y, 1, 4, k.shade)
   p.rect(cx - 1, y - 1, 4, 1, k.skin).set(cx - 1, y - 2, k.light).set(cx + 2, y - 2, k.light)
   return p.svg()
+}
+
+// A claw raised from the felt and (optionally) lowered again: nub, lifted nub, half-raised,
+// then the raised arm (with whatever it holds) slides up out of the shoulder, eased.
+// Up at a, starts down at b (back on the felt at b + 0.4).
+const AGT_SLIDE = 4
+function agtArm(k: CrabHD, x: number, side: Side, held: string, a: number, b?: number) {
+  const y = AGT_Y
+  const e = b ?? AGT_T
+  const back: [number, number][] = b === undefined ? [] : [[b + 0.32, b + 0.4]]
+  let s = shown(agtNub(k, x, side), complement(merge([[a, b === undefined ? AGT_T : b + 0.4]]), AGT_T), AGT_T)
+  s += shown(agtNub(k, x, side, -1), [[a, a + 0.08], ...back], AGT_T)
+  s += shown(agtArmMid(k, x, y, side), b === undefined ? [[a + 0.08, a + 0.16]] : [[a + 0.08, a + 0.16], [b + 0.24, b + 0.32]], AGT_T)
+  const mv: [number, number, number][] = [[a + 0.16, 0, AGT_SLIDE], [a + 0.4, 0, 0]]
+  if (b !== undefined) mv.push([b, 0, 0], [b + 0.24, 0, AGT_SLIDE])
+  s += `<g clip-path="url(#agtArmClip)">${shown(`<g>${armUpHD(k, x, y, side)}${held}${agtMove(mv)}</g>`, [[a + 0.16, b === undefined ? e : b + 0.24]], AGT_T)}</g>`
+  return s
 }
 
 // Eyes raised a pixel and turned toward the newcomer on the right
@@ -579,6 +740,7 @@ function allGoodThings() {
     <linearGradient id="agtFadeT" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.09" stop-color="#fff" stop-opacity="1"/></linearGradient>
     <mask id="agtFadeTable"><rect width="${W}" height="${H}" fill="url(#agtFadeT)"/></mask>
     <clipPath id="agtWin"><rect x="${23 * Q}" y="${4 * Q}" width="${62 * Q}" height="${15 * Q}"/></clipPath>
+    <clipPath id="agtArmClip"><rect width="${W}" height="${(Y + 6) * Q}"/></clipPath>
     <radialGradient id="agtGlow"><stop offset="0" stop-color="#ffb060" stop-opacity="0.38"/><stop offset="0.6" stop-color="#ff9a4a" stop-opacity="0.1"/><stop offset="1" stop-color="#ff9a4a" stop-opacity="0"/></radialGradient>
     <linearGradient id="agtCone" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd89a" stop-opacity="0.28"/><stop offset="1" stop-color="#ffb060" stop-opacity="0.04"/></linearGradient>
   </defs>`
@@ -589,20 +751,21 @@ function allGoodThings() {
   for (const c of [8, 20, 87]) wall.rect(c, 0, 1, 36, '#2a1f2c').rect(c + 1, 0, 1, 36, '#3e2f3a')
   wall.rect(0, 22, GW, 1, '#4a3842').rect(0, 23, GW, 1, '#2a1f2c') // window ledge line
   back += wall.svg()
-  // window: space with stars drifting slowly past, three panes
+  // window: space with stars drifting slowly past, three panes. The star field repeats every
+  // 31 art px and drifts exactly one repeat per story, so the loop restarts seamlessly.
   back += `<rect x="${23 * Q}" y="${4 * Q}" width="${62 * Q}" height="${15 * Q}" fill="url(#agtSpace)"/>`
   let seed = 41
   const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
   const star = new Pix()
   const starB = new Pix()
-  for (let i = 0; i < 46; i++) {
-    const x = 23 + Math.floor(rnd() * 62)
+  const TILE = 31
+  for (let i = 0; i < 23; i++) {
+    const x = 23 + Math.floor(rnd() * TILE)
     const y = 4 + Math.floor(rnd() * 15)
     const b = rnd()
-    ;(b < 0.75 ? star : starB).set(x, y, b < 0.75 ? '#7d70a8' : '#e8e0ff')
-    ;(b < 0.75 ? star : starB).set(x + 62, y, b < 0.75 ? '#7d70a8' : '#e8e0ff')
+    for (const o of [0, TILE, 2 * TILE]) (b < 0.75 ? star : starB).set(x + o, y, b < 0.75 ? '#7d70a8' : '#e8e0ff')
   }
-  back += `<g clip-path="url(#agtWin)"><g>${star.svg()}<g>${starB.svg()}<animate attributeName="opacity" values="1;0.6;1" dur="3.1s" repeatCount="indefinite"/></g><animateTransform attributeName="transform" type="translate" values="0 0;${-62 * Q} 0" dur="46s" repeatCount="indefinite"/></g>`
+  back += `<g clip-path="url(#agtWin)"><g>${star.svg()}<g>${starB.svg()}<animate attributeName="opacity" values="1;0.6;1" dur="${dur / 5}s" repeatCount="indefinite"/></g><animateTransform attributeName="transform" type="translate" values="0 0;${-TILE * Q} 0" dur="${dur}s" repeatCount="indefinite"/></g>`
   back += `<ellipse cx="${66 * Q}" cy="${9 * Q}" rx="40" ry="10" fill="#7a5ac0" opacity="0.14"/></g>`
   const frame = new Pix()
   frame.rect(22, 3, 64, 1, '#6a5866').rect(22, 19, 64, 1, '#5a4856').rect(22, 20, 64, 1, '#3a2c38')
@@ -623,7 +786,7 @@ function allGoodThings() {
   lamp.rect(43, 2, 7, 1, '#a8703c').rect(42, 3, 9, 1, '#8a5a30').rect(41, 4, 11, 1, '#6a4224')
   lamp.rect(43, 2, 2, 1, '#d89a5a')
   lamp.rect(43, 5, 7, 1, '#ffe2a0').set(46, 5, '#fff6dc')
-  s += `<polygon points="${42 * Q},${5 * Q} ${51 * Q},${5 * Q} ${84 * Q},${37 * Q} ${10 * Q},${37 * Q}" fill="url(#agtCone)"><animate attributeName="opacity" values="1;0.9;1" dur="6.2s" repeatCount="indefinite"/></polygon>`
+  s += `<polygon points="${42 * Q},${5 * Q} ${51 * Q},${5 * Q} ${84 * Q},${37 * Q} ${10 * Q},${37 * Q}" fill="url(#agtCone)"><animate attributeName="opacity" values="1;0.9;1" dur="${dur / 3}s" repeatCount="indefinite"/></polygon>`
   s += lamp.svg()
   s += `<ellipse cx="${47 * Q}" cy="${33 * Q}" rx="92" ry="30" fill="url(#agtGlow)"/>`
 
@@ -633,25 +796,29 @@ function allGoodThings() {
   s += chair.svg()
 
   // ---- the story, on one 17.17 s timeline ----
-  const walk0 = 1.1 // first step in
-  const stepT = 0.3 // one step
-  const nSteps = 9 // 3 art px each: from off-screen to beside the chair
-  const walkEnd = walk0 + nSteps * stepT // 3.8: standing by the chair
-  const sitA = 4.8 // lowering
-  const sitB = 5.05 // seated
+  const walk0 = 1.1 // starts walking in
+  const walkEnd = 3.7 // standing by the chair
+  const sitA = 4.75 // lowering
+  const sitB = 5.1 // seated
   const deckMid = 5.4 // reaching for the deck
-  const deckUp = 5.6 // deck raised
+  const deckUp = 5.8 // deck raised
   const shuf = [5.9, 6.2, 6.5, 6.8, 7.1] // split, riffle, split, riffle, squared
   const deal0 = 7.4 // first card leaves the deck
   const dealGap = 0.55
   const flight = 0.4
-  const armDownMid = 9.6 // deck goes back on the table
+  const deckDown = 9.4 // the deck goes back on the table (on the felt at 9.8)
   const armDown = 9.8
   const rikerAt = 9.9
   const dataAt = 11.2
   const worfAt = 12.5
   const picAt = 13.9
   const looks: Record<string, [number, number]> = { r: [3.8, 5.4], d: [4.0, 5.5], w: [4.2, 5.6] }
+  // the reset back to the opening frame
+  const rDown = 15.7 // Riker's cards go down
+  const wDown = 15.8 // Worf's
+  const dDown = 15.9 // Data's
+  const chipsBack: [number, number] = [16.0, 16.6]
+  const picFade: [number, number] = [16.1, 16.8]
 
   // ---- Riker: beard, command red; picks up and grins ----
   {
@@ -665,14 +832,12 @@ function allGoodThings() {
     p.rect(x + 12, Y + 6, 2, 2, AGT_GOLD).set(x + 12, Y + 6, '#fff3b0')
     p.set(x + 3, Y + 6, AGT_GOLD).set(x + 5, Y + 6, AGT_GOLD).set(x + 7, Y + 6, AGT_GOLD)
     let r = p.svg()
-    r += agtLids(k, x, Y, ex, 4.7, 0.3)
-    r += shown(agtLookUp(k, x, Y, ex, agtPlainEye), [looks.r], dur)
+    r += agtLids(k, x, Y, ex, dur / 4, 0.3)
+    r += agtFaded(agtLookUp(k, x, Y, ex, agtPlainEye), [looks.r])
     const grin = new Pix().rect(x + 8, Y + 5, 5, 1, '#fff4e0').set(x + 7, Y + 4, '#fff4e0').set(x + 13, Y + 4, '#fff4e0')
-    r += shown(grin.svg(), [[rikerAt + 0.5, END]], dur)
+    r += agtFaded(grin.svg(), [[rikerAt + 0.5, rDown + 0.3]], 0.3)
     r += agtNub(k, x, 'left')
-    r += shown(agtNub(k, x, 'right'), complement([[rikerAt, END]], dur), dur)
-    r += shown(agtArmMid(k, x, Y, 'right'), [[rikerAt, rikerAt + 0.2]], dur)
-    r += shown(armUpHD(k, x, Y, 'right') + agtFan(new Pix(), x + 18, Y - 8).svg(), [[rikerAt + 0.2, END]], dur)
+    r += agtArm(k, x, 'right', agtFan(new Pix(), x + 18, Y - 8).svg(), rikerAt, rDown)
     s += `<g>${r}${hopQ([[rikerAt + 0.8, rikerAt + 1.05]], dur)}</g>`
   }
 
@@ -685,16 +850,19 @@ function allGoodThings() {
     ex.forEach(e => p.rect(x + e, Y + 2, 2, 3, '#e8b818').set(x + e + 1, Y + 3, '#5a3a08').set(x + e, Y + 2, '#fff07a'))
     p.rect(x + 12, Y + 6, 2, 2, AGT_GOLD).set(x + 12, Y + 6, '#fff3b0')
     p.set(x + 3, Y + 6, AGT_GOLD).set(x + 5, Y + 6, AGT_GOLD)
-    const tilt: [number, number][] = [[dataAt + 0.7, dataAt + 2.0]]
-    let d = shown(p.svg() + agtLids(k, x, Y, ex, 6.1, 0.5) + shown(agtLookUp(k, x, Y, ex, agtDataEye), [looks.d], dur), complement(tilt, dur), dur)
-    d += shown(agtShear(p, x).svg(), tilt, dur)
+    // the head tilt: an eased skew about the body's centre, right side rising two pixels
+    const tA = dataAt + 0.7
+    const tB = dataAt + 2.0
+    const cx = (x + 9) * Q
+    const cy = (Y + 5) * Q
+    const tilt = agtTf('skewY', [[tA - 0.1, '0'], [tA + 0.3, '-6.3'], [tB - 0.3, '-6.3'], [tB + 0.1, '0']])
+    let d = `<g transform="translate(${cx} ${cy})"><g>${tilt}<g transform="translate(${-cx} ${-cy})">${p.svg()}${agtLids(k, x, Y, ex, dur / 3, 0.5)}${agtFaded(agtLookUp(k, x, Y, ex, agtDataEye), [looks.d])}</g></g></g>`
     d += agtNub(k, x, 'left')
-    d += shown(agtNub(k, x, 'right'), complement([[dataAt, END]], dur), dur)
-    // the claw lifts off the felt, then holds the card up in front of him
-    const lift = new Pix().rect(x + 14, 34, 3, 1, k.light).rect(x + 14, 35, 3, 1, k.skin).set(x + 16, 35, k.shade)
-    d += shown(lift.svg(), [[dataAt, dataAt + 0.2]], dur)
+    // the claw lifts off the felt, then rises holding the card up in front of him
+    d += shown(agtNub(k, x, 'right'), complement([[dataAt, dDown + 0.3]], dur), dur)
+    d += shown(agtNub(k, x, 'right', -1), [[dataAt, dataAt + 0.12], [dDown + 0.2, dDown + 0.3]], dur)
     const hand = agtFan(new Pix(), x + 11, Y + 9).rect(x + 12, 35, 4, 1, k.light).rect(x + 12, 36, 4, 1, k.skin)
-    d += shown(hand.svg(), [[dataAt + 0.2, END]], dur)
+    d += `<g opacity="0">${hand.svg()}${agtMove([[dataAt + 0.08, 0, 1], [dataAt + 0.32, 0, 0], [dDown, 0, 0], [dDown + 0.24, 0, 1]])}${agtFadeWin([[dataAt + 0.08, dDown + 0.24]], 0.16)}</g>`
     s += `<g>${d}</g>`
   }
 
@@ -716,21 +884,15 @@ function allGoodThings() {
     p.set(x + 15, Y + 6, sil)
     p.rect(x + 3, Y + 6, 2, 2, AGT_GOLD).set(x + 3, Y + 6, '#fff3b0')
     let w = p.svg()
-    w += agtLids(k, x, Y, ex, 5.5, 0.62)
-    w += shown(agtLookUp(k, x, Y, ex, agtPlainEye), [looks.w], dur)
+    w += agtLids(k, x, Y, ex, dur / 3, 0.62)
+    w += agtFaded(agtLookUp(k, x, Y, ex, agtPlainEye), [looks.w])
     const brow = new Pix().set(x + 5, Y + 1, '#3a1a10').rect(x + 6, Y + 2, 2, 1, '#3a1a10').rect(x + 12, Y + 2, 2, 1, '#3a1a10').set(x + 14, Y + 1, '#3a1a10').rect(x + 8, Y + 1, 4, 1, '#5a2a18')
     brow.rect(x + 8, Y + 4, 3, 1, '#3a1a10').set(x + 7, Y + 5, '#3a1a10').set(x + 11, Y + 5, '#3a1a10') // a frown
-    w += shown(brow.svg(), [[worfAt + 0.5, END]], dur)
+    w += agtFaded(brow.svg(), [[worfAt + 0.5, wDown + 0.3]], 0.3)
     // left claw: picks up his card and holds it up
-    w += shown(agtNub(k, x, 'left'), complement([[worfAt, END]], dur), dur)
-    w += shown(agtArmMid(k, x, Y, 'left'), [[worfAt, worfAt + 0.2]], dur)
-    w += shown(armUpHD(k, x, Y, 'left') + agtFan(new Pix(), x - 5, Y - 8).svg(), [[worfAt + 0.2, END]], dur)
+    w += agtArm(k, x, 'left', agtFan(new Pix(), x - 5, Y - 8).svg(), worfAt, wDown)
     // right claw: shoves his chip stack into the pot, then comes back
-    const pushA = +((worfAt + 0.9) / dur).toFixed(4)
-    const pushB = +((worfAt + 1.7) / dur).toFixed(4)
-    const backA = +((worfAt + 2.0) / dur).toFixed(4)
-    const backB = +((worfAt + 2.5) / dur).toFixed(4)
-    w += `<g>${agtNub(k, x, 'right')}<animateTransform attributeName="transform" type="translate" dur="${dur}s" repeatCount="indefinite" values="0 0;0 0;${-8 * Q} 0;${-8 * Q} 0;0 0;0 0" keyTimes="0;${pushA};${pushB};${backA};${backB};1"/></g>`
+    w += `<g>${agtNub(k, x, 'right')}${agtMove([[worfAt + 0.9, 0, 0], [worfAt + 1.7, -8, 0], [worfAt + 2.0, -8, 0], [worfAt + 2.5, 0, 0]])}</g>`
     s += `<g>${w}</g>`
   }
 
@@ -742,43 +904,44 @@ function allGoodThings() {
     p.rect(x + 12, Y + 6, 2, 2, AGT_GOLD).set(x + 12, Y + 6, '#fff3b0')
     p.set(x + 3, Y + 6, AGT_GOLD).set(x + 5, Y + 6, AGT_GOLD).set(x + 7, Y + 6, AGT_GOLD).set(x + 9, Y + 6, AGT_GOLD)
     let pc = p.svg()
-    // legs while walking, two frames in turn, one per step
+    // legs while walking: two frames in turn at ~7.7 Hz while the body glides
     const legA = new Pix()
     const legB = new Pix()
     for (const lx of [1, 5, 11, 15]) legA.rect(x + lx, Y + 10, 2, 3, k.legs)
     for (const [lx, l] of [[0, 3], [5, 2], [10, 3], [15, 2]] as [number, number][]) legB.rect(x + lx, Y + 10, 2, l, k.legs)
-    const stepsA: [number, number][] = [[0, walk0], [walkEnd, sitB]]
+    const stepsA: [number, number][] = [[0, walk0]]
     const stepsB: [number, number][] = []
-    for (let i = 0; i < nSteps; i++) (i % 2 ? stepsA : stepsB).push([walk0 + i * stepT, walk0 + (i + 1) * stepT])
+    const nLeg = 20
+    const legT = (walkEnd - walk0) / nLeg
+    for (let i = 0; i < nLeg; i++) (i % 2 ? stepsA : stepsB).push([walk0 + i * legT, walk0 + (i + 1) * legT])
+    stepsA.push([walkEnd, sitB])
     pc += shown(legA.svg(), stepsA, dur)
     pc += shown(legB.svg(), stepsB, dur)
-    pc += agtLids(k, x, Y, ex, 4.3, 0.75)
-    // left claw: reaches for the deck, holds it up through the shuffle and the deal
-    const hold: [number, number] = [deckMid, armDown]
-    pc += shown(agtNub(k, x, 'left'), complement([hold], dur), dur)
-    pc += shown(agtArmMid(k, x, Y, 'left'), [[deckMid, deckUp], [armDownMid, armDown]], dur)
-    pc += shown(armUpHD(k, x, Y, 'left'), [[deckUp, armDownMid]], dur)
-    const deck = new Pix().rect(x - 4, Y - 12, 4, 4, AGT_CARD_R).rect(x - 4, Y - 12, 4, 1, AGT_CARD_W).rect(x - 4, Y - 9, 4, 1, '#d8d0c4').set(x - 3, Y - 10, '#d0505a')
-    const split = new Pix()
-      .rect(x - 6, Y - 12, 2, 4, AGT_CARD_R).rect(x - 6, Y - 12, 2, 1, AGT_CARD_W).rect(x - 6, Y - 9, 2, 1, '#d8d0c4')
-      .rect(x - 1, Y - 13, 2, 4, AGT_CARD_R).rect(x - 1, Y - 13, 2, 1, AGT_CARD_W).rect(x - 1, Y - 10, 2, 1, '#d8d0c4')
+    pc += agtLids(k, x, Y, ex, dur / 4, 0.75)
+    // left claw: reaches for the deck, holds it up through the shuffle and the deal.
+    // The deck splits and comes back together in eased slides; the riffle fades in between.
+    const halfL = new Pix().rect(x - 4, Y - 12, 2, 4, AGT_CARD_R).rect(x - 4, Y - 12, 2, 1, AGT_CARD_W).rect(x - 4, Y - 9, 2, 1, '#d8d0c4').set(x - 3, Y - 10, '#d0505a')
+    const halfR = new Pix().rect(x - 2, Y - 12, 2, 4, AGT_CARD_R).rect(x - 2, Y - 12, 2, 1, AGT_CARD_W).rect(x - 2, Y - 9, 2, 1, '#d8d0c4')
+    const apart = (dx: number, dy: number) => {
+      const k2: [number, number, number][] = []
+      for (const t of [shuf[0], shuf[2]]) k2.push([t, 0, 0], [t + 0.16, dx, dy], [t + 0.24, dx, dy], [t + 0.4, 0, 0])
+      return agtMove(k2)
+    }
     const riffle = new Pix()
     ;['#f2ece0', '#b02a36', '#f2ece0', '#b02a36', '#d8d0c4'].forEach((c, j) => riffle.rect(x - 5, Y - 13 + j, 5, 1, c))
     riffle.set(x - 5, Y - 12, '#d0505a').set(x - 1, Y - 10, '#d0505a')
-    pc += shown(deck.svg(), [[deckUp, shuf[0]], [shuf[4], armDownMid]], dur)
-    pc += shown(split.svg(), [[shuf[0], shuf[1]], [shuf[2], shuf[3]]], dur)
-    pc += shown(riffle.svg(), [[shuf[1], shuf[2]], [shuf[3], shuf[4]]], dur)
+    let held = `<g>${halfL.svg()}${apart(-2, 0)}</g><g>${halfR.svg()}${apart(1, -1)}</g>`
+    held += agtFaded(riffle.svg(), [[shuf[1] + 0.05, shuf[2]], [shuf[3] + 0.05, shuf[4]]], 0.1)
+    pc += agtArm(k, x, 'left', held, deckMid, deckDown)
     // right claw: picks up his own card at the end
-    pc += shown(agtNub(k, x, 'right'), complement([[picAt, END]], dur), dur)
-    pc += shown(agtArmMid(k, x, Y, 'right'), [[picAt, picAt + 0.2]], dur)
-    pc += shown(armUpHD(k, x, Y, 'right') + agtFan(new Pix(), x + 16, Y - 8).svg(), [[picAt + 0.2, END]], dur)
+    pc += agtArm(k, x, 'right', agtFan(new Pix(), x + 16, Y - 8).svg(), picAt)
     const smile = new Pix().rect(x + 6, Y + 5, 4, 1, '#8e3a28').set(x + 5, Y + 4, '#8e3a28').set(x + 10, Y + 4, '#8e3a28')
-    pc += shown(smile.svg(), [[picAt + 0.6, END]], dur)
-    // the walk: off-screen right, 3 art px a step, standing; then lowering into the chair
-    const steps: [number, number, number][] = [[0, 30, -2]]
-    for (let i = 0; i < nSteps; i++) steps.push([+(walk0 + i * stepT).toFixed(2), 27 - 3 * i, -2])
-    steps.push([sitA, 1, -1], [sitB, 0, 0])
-    s += `<g>${pc}${agtSteps(steps, dur)}</g>`
+    pc += agtFaded(smile.svg(), [[picAt + 0.6, END]], 0.3)
+    // the walk: an eased glide in from off-screen, standing; then lowering into the chair.
+    // At the end he fades from the chair and is put back off-screen, unseen.
+    const mv = agtMove([[walk0, 30, -2], [walkEnd, 3, -2], [sitA, 3, -2], [sitB, 0, 0], [picFade[1] + 0.05, 0, 0], [picFade[1] + 0.1, 30, -2]], '0.35 0 0.6 1')
+    const fade = agtOp([[picFade[0], 1], [picFade[1], 0], [picFade[1] + 0.12, 0], [picFade[1] + 0.15, 1]])
+    s += `<g>${pc}${mv}${fade}</g>`
   }
 
   // ---- the table ----
@@ -803,15 +966,16 @@ function allGoodThings() {
   agtChips(chips, 44, 40, ['#c8333a', '#e0d8cc', '#c8333a'])
   agtChips(chips, 42, 40, ['#3a62c8'])
   s += chips.svg()
-  // Worf's stack, shoved into the pot by his right claw
+  // Worf's stack, shoved into the pot by his right claw (eased); at the end it eases back
   {
     const ws = agtChips(new Pix(), AGT_WX + 11, 40, ['#2a2a34', '#c8333a', '#2a2a34', '#c8333a']).svg()
-    const a = +((worfAt + 0.9) / dur).toFixed(4)
-    const b = +((worfAt + 1.7) / dur).toFixed(4)
-    s += `<g>${ws}<animateTransform attributeName="transform" type="translate" dur="${dur}s" repeatCount="indefinite" values="0 0;0 0;${-8 * Q} 0;${-8 * Q} 0" keyTimes="0;${a};${b};1"/></g>`
+    s += `<g>${ws}${agtMove([[worfAt + 0.9, 0, 0], [worfAt + 1.7, -8, 0], [chipsBack[0], -8, 0], [chipsBack[1], 0, 0]])}</g>`
   }
-  s += shown(agtCardFlat(new Pix(), AGT_PX + 6, 39).rect(AGT_PX + 6, 38, 4, 1, AGT_CARD_W).svg(), [[0, deckUp]], dur)
-  s += shown(agtCardFlat(new Pix(), AGT_PX + 1, 39).rect(AGT_PX + 1, 38, 4, 1, AGT_CARD_W).svg(), [[armDown, END]], dur)
+  // the deck on the felt: picked up from in front of the chair, put down a little to the
+  // left after the deal, and back in its place by the end
+  const flat = (dx: number) => agtCardFlat(new Pix(), AGT_PX + dx, 39).rect(AGT_PX + dx, 38, 4, 1, AGT_CARD_W).svg()
+  s += `<g>${flat(6)}${agtOp([[deckMid, 1], [deckMid + 0.3, 0], [picFade[0], 0], [picFade[1], 1]])}</g>`
+  s += `<g opacity="0">${flat(1)}${agtOp([[deckDown + 0.2, 0], [armDown, 1], [picFade[0], 1], [picFade[1], 0]])}</g>`
 
   // ---- the deal: one card at a time from Picard's deck to each player, himself last ----
   const order = [AGT_WX, AGT_DX, AGT_RX, AGT_PX]
@@ -827,13 +991,14 @@ function allGoodThings() {
     const ddx = (sx - lx) * Q
     const ddy = (sy - ly) * Q
     const path = `M${ddx} ${ddy} Q${ddx / 2} ${ddy - 14} 0 0`
-    const a = +(t0 / dur).toFixed(4)
-    const b = +(t1 / dur).toFixed(4)
-    s += `<g>${card}<animateMotion path="${path}" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;${a};${b};1" dur="${dur}s" repeatCount="indefinite"/>${windows([[t0, pickup[px]]], dur)}</g>`
+    const a = agtKT(t0)
+    const b = agtKT(t1)
+    const pk = pickup[px]
+    s += `<g opacity="0">${card}<animateMotion path="${path}" calcMode="spline" keyPoints="0;0;1;1" keyTimes="0;${a};${b};1" keySplines="0 0 1 1;0.3 0 0.3 1;0 0 1 1" dur="${dur}s" repeatCount="indefinite"/>${agtOp([[t0, 0], [t0 + 0.06, 1], [pk + 0.04, 1], [pk + 0.24, 0]])}</g>`
   })
 
   // a slow, faint glint on the pot
-  s += `<rect x="${45 * Q}" y="${40 * Q}" width="${Q}" height="${Q}" fill="#fff" opacity="0"><animate attributeName="opacity" values="0;0;0.7;0;0" keyTimes="0;0.5;0.68;0.88;1" dur="4.1s" repeatCount="indefinite"/></rect>`
+  s += `<rect x="${45 * Q}" y="${40 * Q}" width="${Q}" height="${Q}" fill="#fff" opacity="0"><animate attributeName="opacity" values="0;0;0.7;0;0" keyTimes="0;0.5;0.68;0.88;1" dur="${dur / 4}s" repeatCount="indefinite"/></rect>`
   return s
 }
 
@@ -860,6 +1025,10 @@ const FCH_T_BDOWN = 13.6 // and goes down again
 const FCH_T_BACK = 12.6 // Picard steps back (2 steps)
 const FCH_T_UP0 = 13.7 // cables start to withdraw...
 const FCH_T_UP1 = 15.5 // ...gone into the hatch
+const FCH_T_OUT = 15.5 // Picard backs out to where he came in (6 steps)
+const FCH_T_GONE0 = 15.6 // she dissolves back into the dark...
+const FCH_T_GONE1 = 16.9 // ...leaving the empty body, as at the start
+const FCH_AMB = (n: number) => +(SCENE_SECONDS / n).toFixed(4) // ambient loops that divide the story
 
 const FCH_PICARD: CrabHD = {
   skin: '#d97757',
@@ -884,37 +1053,18 @@ const FCH_SUIT = { top: '#56636a', mid: '#171b1e', low: '#101315', shade: '#0a0c
 
 const fchK = (t: number) => +(t / FCH_DUR).toFixed(4)
 
-// Piecewise-eased track of whole art pixels, written as a discrete translate
+// Smooth eased translate through [time, value] points (art pixels) on one axis
+const FCH_EASE = '0.42 0 0.58 1'
 function fchTrack(pts: [number, number][], axis: 'x' | 'y', dur: number) {
-  const times: number[] = []
-  const vals: string[] = []
-  let last: number | null = null
-  for (let i = 0; i <= dur * 50; i++) {
-    const t = i / 50
-    let v = pts[pts.length - 1][1]
-    for (let k = 0; k < pts.length - 1; k++) {
-      const [t0, v0] = pts[k]
-      const [t1, v1] = pts[k + 1]
-      if (t >= t0 && t < t1) {
-        const u = (t - t0) / (t1 - t0)
-        const e = u * u * (3 - 2 * u)
-        v = v0 + (v1 - v0) * e
-        break
-      }
-    }
-    const r = Math.round(v)
-    if (r !== last && t < dur) {
-      times.push(t / dur)
-      vals.push(axis === 'x' ? `${r * Q} 0` : `0 ${r * Q}`)
-      last = r
-    }
-  }
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${times.map(t => +t.toFixed(4)).join(';')}"/>`
+  const vals = pts.map(([, v]) => (axis === 'x' ? `${v * Q} 0` : `0 ${v * Q}`))
+  const times = pts.map(([t]) => +(t / dur).toFixed(4))
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${times.join(';')}" keySplines="${pts.slice(1).map(() => FCH_EASE).join(';')}"/>`
 }
 
-// Discrete translate through explicit keys [time, x, y] (art pixels)
-function fchKeys(keys: [number, number, number][]) {
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${FCH_DUR}s" repeatCount="indefinite" values="${keys.map(([, x, y]) => `${x * Q} ${y * Q}`).join(';')}" keyTimes="${keys.map(([t]) => fchK(t)).join(';')}"/>`
+// Spline translate through explicit keys [time, x, y, spline into this key] (art pixels)
+function fchKeys(keys: [number, number, number, string?][]) {
+  const all = keys[keys.length - 1][0] < FCH_DUR ? [...keys, [FCH_DUR, keys[keys.length - 1][1], keys[keys.length - 1][2]] as [number, number, number]] : keys
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${FCH_DUR}s" repeatCount="indefinite" values="${all.map(([, x, y]) => `${x * Q} ${y * Q}`).join(';')}" keyTimes="${all.map(([t]) => fchK(t)).join(';')}" keySplines="${all.slice(1).map(k => k[3] || FCH_EASE).join(';')}"/>`
 }
 
 // Smooth opacity ramp on the story timeline: [time, opacity] points
@@ -939,7 +1089,7 @@ function fchFly(shape: string, x: number, y: number, path: string, t0: number, l
   const b = fchK(t0 + life)
   const op = fade
     ? `<animate attributeName="opacity" dur="${FCH_DUR}s" repeatCount="indefinite" values="0;0;0.42;0;0" keyTimes="0;${a};${fchK(t0 + 0.35)};${b};1"/>`
-    : `<animate attributeName="opacity" calcMode="discrete" dur="${FCH_DUR}s" repeatCount="indefinite" values="0;1;0" keyTimes="0;${a};${b}"/>`
+    : `<animate attributeName="opacity" dur="${FCH_DUR}s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;${a};${fchK(t0 + 0.08)};${fchK(t0 + life * 0.6)};${b};1"/>`
   return `<g transform="translate(${x * Q} ${y * Q})"><g opacity="0">${shape}<animateMotion path="${path}" dur="${FCH_DUR}s" repeatCount="indefinite" calcMode="linear" keyPoints="0;0;1;1" keyTimes="0;${a};${b};1"/>${op}</g></g>`
 }
 
@@ -1009,20 +1159,35 @@ function fchBackground(W: number, H: number) {
 
   // indicator lights in the wall plates, breathing slowly (single art pixels)
   lights.forEach(([x, y], i) => {
-    back += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#5dff8a"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="${2.6 + (i % 5) * 0.45}s" begin="${(i * 0.37) % 2.3}s" repeatCount="indefinite"/></rect>`
+    back += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#5dff8a"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="${FCH_AMB(4 + (i % 3))}s" begin="-${((i * 0.37) % 2.3).toFixed(2)}s" repeatCount="indefinite"/></rect>`
   })
   return back
 }
 
-// Her left arm (toward Picard), raised: 'mid' is half way, 'curl' bends the claw tips in
-function fchArmLeft(x: number, y: number, pose: 'mid' | 'up' | 'curl') {
+// Her left arm (toward Picard). Raising: 'low' -> 'mid' -> 'high' -> 'up';
+// beckoning: 'up' -> 'half' (tips bending) -> 'curl' (tips folded toward her)
+type FchArm = 'low' | 'mid' | 'high' | 'up' | 'half' | 'curl'
+function fchArmLeft(x: number, y: number, pose: FchArm) {
   const k = FCH_QUEEN
   const p = new Pix()
   p.rect(x - 3, y + 4, 3, 2, k.skin)
+  if (pose === 'low') {
+    p.rect(x - 4, y + 2, 2, 3, k.skin).rect(x - 4, y + 2, 1, 3, k.shade)
+    p.rect(x - 6, y + 1, 4, 1, k.skin).rect(x - 6, y - 1, 1, 2, k.skin).rect(x - 3, y - 1, 1, 2, k.skin)
+    p.set(x - 6, y - 1, k.light).set(x - 3, y - 1, k.light)
+    return p.svg()
+  }
   if (pose === 'mid') {
     p.rect(x - 5, y + 1, 2, 4, k.skin).rect(x - 5, y + 1, 1, 4, k.shade)
     p.rect(x - 7, y - 2, 1, 2, k.skin).rect(x - 4, y - 2, 1, 2, k.skin)
     p.rect(x - 7, y, 4, 1, k.skin).set(x - 7, y - 2, k.light).set(x - 4, y - 2, k.light)
+    return p.svg()
+  }
+  if (pose === 'high') {
+    p.rect(x - 4, y - 2, 2, 7, k.skin).rect(x - 4, y - 2, 1, 7, k.shade)
+    p.rect(x - 6, y - 3, 4, 1, k.skin).rect(x - 5, y - 2, 2, 1, k.skin)
+    p.rect(x - 6, y - 5, 1, 2, k.skin).rect(x - 3, y - 5, 1, 2, k.skin)
+    p.set(x - 6, y - 5, k.light).set(x - 3, y - 5, k.light)
     return p.svg()
   }
   const ax = x - 3
@@ -1032,6 +1197,10 @@ function fchArmLeft(x: number, y: number, pose: 'mid' | 'up' | 'curl') {
   if (pose === 'up') {
     p.rect(cx, y - 8, 1, 3, k.skin).rect(cx + 3, y - 8, 1, 3, k.skin)
     p.set(cx, y - 8, k.light).set(cx + 3, y - 8, k.light)
+  } else if (pose === 'half') {
+    // tips starting to bend: shorter, lit tip still on top
+    p.rect(cx, y - 7, 1, 2, k.skin).rect(cx + 3, y - 7, 1, 2, k.skin)
+    p.set(cx, y - 7, k.light).set(cx + 3, y - 7, k.light)
   } else {
     // tips folded toward her: a come-here curl
     p.rect(cx, y - 7, 1, 2, k.skin).rect(cx + 3, y - 7, 1, 2, k.skin)
@@ -1057,17 +1226,25 @@ function fchQueenBody(x: number, y: number) {
   let s = p.svg()
   // the open socket waiting for her spine; its glow dies away once she is seated
   const sock = new Pix().rect(x + 6, y + 5, 6, 1, '#020403').rect(x + 7, y + 6, 4, 1, '#020403').rect(x + 8, y + 5, 2, 1, '#3cff7a')
-  s += `<g>${sock.svg()}${fchFade([[FCH_T_LOCK, 1], [FCH_T_LOCK + 0.8, 0]])}</g>`
+  s += `<g>${sock.svg()}${fchFade([[FCH_T_LOCK, 1], [FCH_T_LOCK + 0.8, 0], [FCH_T_GONE0 + 0.7, 0], [FCH_T_GONE1 + 0.1, 1]])}</g>`
   // arms: limp until she is whole, then at rest; the left one beckons Picard
   const B = FCH_T_BECK
   const D = FCH_T_BDOWN
-  const limp = new Pix().rect(x - 3, y + 6, 3, 2, k.skin).rect(x - 3, y + 8, 3, 1, k.shade).rect(x + 18, y + 6, 3, 2, k.skin).rect(x + 18, y + 8, 3, 1, k.shade)
-  s += shown(limp.svg(), [[0, FCH_T_ARMS]], FCH_DUR)
-  s += shown(armRestHD(k, x, y, 'right'), [[FCH_T_ARMS, FCH_DUR]], FCH_DUR)
-  s += shown(armRestHD(k, x, y, 'left'), [[FCH_T_ARMS, B], [D + 0.3, FCH_DUR]], FCH_DUR)
-  s += shown(fchArmLeft(x, y, 'mid'), [[B, B + 0.3], [D, D + 0.3]], FCH_DUR)
-  s += shown(fchArmLeft(x, y, 'up'), [[B + 0.3, B + 0.75], [B + 1.15, B + 1.4], [B + 1.75, D]], FCH_DUR)
-  s += shown(fchArmLeft(x, y, 'curl'), [[B + 0.75, B + 1.15], [B + 1.4, B + 1.75]], FCH_DUR)
+  // limp (2 px low) until she is whole, then both arms lift smoothly to rest
+  const A = FCH_T_ARMS
+  const lift = fchKeys([[0, 0, 2], [A - 0.15, 0, 2], [A + 0.25, 0, 0], [FCH_T_GONE0 + 0.5, 0, 0], [FCH_T_GONE1, 0, 2]])
+  s += `<g>${armRestHD(k, x, y, 'right')}${lift}</g>`
+  s += `<g>${shown(armRestHD(k, x, y, 'left'), [[0, B], [D + 0.3, FCH_DUR]], FCH_DUR)}${lift}</g>`
+  const st = 0.1
+  s += shown(fchArmLeft(x, y, 'low'), [[B, B + st], [D + 2 * st, D + 3 * st]], FCH_DUR)
+  s += shown(fchArmLeft(x, y, 'mid'), [[B + st, B + 2 * st], [D + st, D + 2 * st]], FCH_DUR)
+  s += shown(fchArmLeft(x, y, 'high'), [[B + 2 * st, B + 3 * st], [D, D + st]], FCH_DUR)
+  const h = 0.09
+  const curls: [number, number][] = [[B + 0.75, B + 1.15], [B + 1.4, B + 1.75]]
+  const up: [number, number][] = [[B + 0.3, curls[0][0] - h / 2], [curls[0][1] + h / 2, curls[1][0] - h / 2], [curls[1][1] + h / 2, D]]
+  s += shown(fchArmLeft(x, y, 'up'), up, FCH_DUR)
+  s += shown(fchArmLeft(x, y, 'half'), curls.flatMap(([a, b]) => [[a - h / 2, a + h / 2], [b - h / 2, b + h / 2]] as [number, number][]), FCH_DUR)
+  s += shown(fchArmLeft(x, y, 'curl'), curls.map(([a, b]) => [a + h / 2, b - h / 2] as [number, number]), FCH_DUR)
   return s
 }
 
@@ -1137,13 +1314,22 @@ function fchQueenHead(x: number, y: number) {
   // eyes: closed while she is carried, open ahead, then turned to Picard (one slow blink)
   const O = FCH_T_OPEN
   const T = FCH_T_TURN
-  s += shown(new Pix().rect(x + 5, y + 3, 2, 1, '#4b514b').rect(x + 11, y + 3, 2, 1, '#4b514b').svg(), [[0, O]], FCH_DUR)
-  s += shown(new Pix().rect(x + 5, y + 2, 2, 3, EYE_HD).rect(x + 11, y + 2, 2, 3, EYE_HD).svg(), [[O, T]], FCH_DUR)
-  s += shown(new Pix().rect(x + 3, y + 2, 2, 3, EYE_HD).rect(x + 9, y + 2, 2, 3, EYE_HD).svg(), [[T, 14.9], [15.05, FCH_DUR]], FCH_DUR)
-  s += shown(new Pix().rect(x + 3, y + 3, 2, 1, '#4b514b').rect(x + 9, y + 3, 2, 1, '#4b514b').svg(), [[14.9, 15.05]], FCH_DUR)
+  // eyes hgt (1..3) tall, bottom row at y + 4, left eye at offset ox; a lid line when closed
+  const eye = (ox: number, hgt: number) => new Pix().rect(x + ox, y + 5 - hgt, 2, hgt, EYE_HD).rect(x + ox + 6, y + 5 - hgt, 2, hgt, EYE_HD).svg()
+  const lid = (ox: number) => new Pix().rect(x + ox, y + 3, 2, 1, '#4b514b').rect(x + ox + 6, y + 3, 2, 1, '#4b514b').svg()
+  const e = 0.09
+  const K0 = 14.9 // the slow blink
+  s += shown(lid(5), [[0, O]], FCH_DUR)
+  s += shown(eye(5, 1), [[O, O + e]], FCH_DUR)
+  s += shown(eye(5, 2), [[O + e, O + 2 * e]], FCH_DUR)
+  s += shown(eye(5, 3), [[O + 2 * e, T]], FCH_DUR)
+  s += shown(eye(4, 3), [[T, T + e]], FCH_DUR)
+  s += shown(eye(3, 3), [[T + e, K0], [K0 + 0.27, FCH_DUR]], FCH_DUR)
+  s += shown(eye(3, 2), [[K0, K0 + 0.06], [K0 + 0.21, K0 + 0.27]], FCH_DUR)
+  s += shown(lid(3), [[K0 + 0.06, K0 + 0.21]], FCH_DUR)
   // red eyepiece: kindles slowly after the lock, then breathes gently
   const lit = new Pix().set(x + 15, y + 2, '#ff3b3b').set(x + 15, y + 3, '#b01c1c').svg()
-  const glow = `<circle cx="${(x + 15.5) * Q}" cy="${(y + 2.5) * Q}" r="5" fill="#ff3030" opacity="0.3"><animate attributeName="opacity" values="0.22;0.4;0.22" dur="3.2s" repeatCount="indefinite"/></circle>`
+  const glow = `<circle cx="${(x + 15.5) * Q}" cy="${(y + 2.5) * Q}" r="5" fill="#ff3030" opacity="0.3"><animate attributeName="opacity" values="0.22;0.4;0.22" dur="${FCH_AMB(5)}s" repeatCount="indefinite"/></circle>`
   s += `<g opacity="0">${glow}${lit}${fchFade([[FCH_T_EYE0, 0], [FCH_T_EYE1, 1]])}</g>`
   return s
 }
@@ -1167,12 +1353,12 @@ function firstContactHD() {
 
   let back = fchBackground(W, H)
   // green haze drifting slowly through the chamber
-  back += `<ellipse cx="${30 * Q}" cy="${26 * Q}" rx="70" ry="26" fill="url(#fchHaze)" opacity="0.6"><animate attributeName="cx" values="${26 * Q};${36 * Q};${26 * Q}" dur="12s" repeatCount="indefinite"/></ellipse>`
+  back += `<ellipse cx="${30 * Q}" cy="${26 * Q}" rx="70" ry="26" fill="url(#fchHaze)" opacity="0.6"><animate attributeName="cx" values="${26 * Q};${36 * Q};${26 * Q}" dur="${FCH_AMB(1)}s" repeatCount="indefinite"/></ellipse>`
   back += `<rect x="0" y="${37 * Q}" width="${W}" height="${8 * Q}" fill="#3cff7a" opacity="0.05"/>`
   s += `<g mask="url(#fchFade)">${back}</g>`
 
   // the light pouring down from the hatch onto her body: steady, a very slow breath
-  s += `<polygon points="${60 * Q},${4 * Q} ${78 * Q},${4 * Q} ${88 * Q},${42 * Q} ${50 * Q},${42 * Q}" fill="url(#fchBeamG)" opacity="0.9"><animate attributeName="opacity" values="0.86;0.96;0.86" dur="7s" repeatCount="indefinite"/></polygon>`
+  s += `<polygon points="${60 * Q},${4 * Q} ${78 * Q},${4 * Q} ${88 * Q},${42 * Q} ${50 * Q},${42 * Q}" fill="url(#fchBeamG)" opacity="0.9"><animate attributeName="opacity" values="0.86;0.96;0.86" dur="${FCH_AMB(2)}s" repeatCount="indefinite"/></polygon>`
   s += `<ellipse cx="${69 * Q}" cy="${34 * Q}" rx="44" ry="30" fill="url(#fchHaze)" opacity="0.65"/>`
 
   // the dais she stands on
@@ -1182,8 +1368,8 @@ function firstContactHD() {
 
   // floor vent breathing steam between them
   for (let i = 0; i < 3; i++) {
-    const d = 4.2 + i * 0.8
-    s += `<g transform="translate(${46 * Q} ${40 * Q})"><g opacity="0">${fchPuff('#9fc7aa', i === 1)}<animateMotion path="M0 0 q ${i % 2 ? 6 : -4} -10 ${i % 2 ? 2 : 5} -24" dur="${d}s" begin="${i * 1.4}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.28;0" dur="${d}s" begin="${i * 1.4}s" repeatCount="indefinite"/></g></g>`
+    const d = FCH_AMB(i ? 3 : 4)
+    s += `<g transform="translate(${46 * Q} ${40 * Q})"><g opacity="0">${fchPuff('#9fc7aa', i === 1)}<animateMotion path="M0 0 q ${i % 2 ? 6 : -4} -10 ${i % 2 ? 2 : 5} -24" dur="${d}s" begin="-${i * 1.4 + 0.9}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.28;0" dur="${d}s" begin="-${i * 1.4 + 0.9}s" repeatCount="indefinite"/></g></g>`
   }
   s += new Pix().rect(44, 41, 5, 1, '#1d3a26').set(45, 41, '#0a140d').set(47, 41, '#0a140d').svg()
 
@@ -1200,22 +1386,23 @@ function firstContactHD() {
       p.set(px0 + 1, 28, '#cf8a6a').set(px0 + 16, 28, '#e6b08a')
     },
   )
-  const walk: [number, number, number][] = [[0, -21, 0]]
-  for (let i = 0; i < 7; i++) {
-    const t = FCH_T_WALK + i * 0.32
-    const x = -21 + 3 * (i + 1)
-    walk.push([t, x, -1], [t + 0.16, x, 0])
-  }
+  // forward glide (7 steps), then two steps back; each step bobs him up 1 px and down
   const bk = FCH_T_BACK
-  walk.push([bk, -1, -1], [bk + 0.16, -1, 0], [bk + 0.42, -3, -1], [bk + 0.58, -3, 0])
-  s += `<g>${pic}${fchKeys(walk)}</g>`
+  const glide = fchKeys([[0, -21, 0], [FCH_T_WALK - 0.05, -21, 0], [FCH_T_WALK + 2.2, 0, 0, '0.3 0 0.6 1'], [bk - 0.05, 0, 0], [bk + 0.6, -3, 0, '0.3 0 0.5 1'], [FCH_T_OUT, -3, 0], [FCH_T_OUT + 1.6, -21, 0, '0.35 0 0.6 1']])
+  const bob: [number, number, number, string?][] = [[0, 0, 0]]
+  const steps = [...Array.from({ length: 7 }, (_, i) => FCH_T_WALK + i * 0.32), bk, bk + 0.42, ...Array.from({ length: 6 }, (_, i) => FCH_T_OUT + 0.05 + i * 0.26)]
+  const UP = '0.2 0.6 0.4 1'
+  const DN = '0.6 0 0.8 0.4'
+  for (const t of steps) bob.push([t - 0.04, 0, 0], [t + 0.08, 0, -1, UP], [t + 0.26, 0, 0, DN])
+  s += `<g>${glide}<g>${pic}${fchKeys(bob)}</g></g>`
 
   // the Queen: cables, spine and tubes, body, then head, with a 1px settle on the lock
   let queen = fchHang(fchCables(qx, qy), [[0, -46], [FCH_T_DESC, -46], [FCH_T_LOCK, 0], [FCH_T_UP0, 0], [FCH_T_UP1, -46], [dur, -46]])
-  queen += `<g mask="url(#fchSpineM)">${fchHang(fchQueenBack(qx, qy), FCH_DOWN)}</g>`
+  const gone = fchFade([[FCH_T_GONE0, 1], [FCH_T_GONE1, 0]])
+  queen += `<g mask="url(#fchSpineM)"><g>${fchHang(fchQueenBack(qx, qy), FCH_DOWN)}${gone}</g></g>`
   queen += fchQueenBody(qx, qy)
-  queen += fchHang(fchQueenHead(qx, qy), FCH_DOWN)
-  s += `<g>${queen}${fchKeys([[0, 0, 0], [FCH_T_LOCK, 0, 1], [FCH_T_LOCK + 0.35, 0, 0]])}</g>`
+  queen += `<g>${fchHang(fchQueenHead(qx, qy), FCH_DOWN)}${gone}</g>`
+  s += `<g>${queen}${fchKeys([[0, 0, 0], [FCH_T_LOCK - 0.05, 0, 0], [FCH_T_LOCK + 0.1, 0, 1, '0.3 0 0.5 1'], [FCH_T_LOCK + 0.5, 0, 0]])}</g>`
 
   // the lock: a small local glow at the neck, a few sparks, soft steam both sides
   s += `<ellipse cx="${69 * Q}" cy="${33 * Q}" rx="12" ry="5" fill="url(#fchSpark)" opacity="0">${fchFade([[FCH_T_LOCK - 0.1, 0], [FCH_T_LOCK + 0.4, 0.8], [FCH_T_LOCK + 1.5, 0]])}</ellipse>`
@@ -1241,7 +1428,7 @@ function firstContactHD() {
   }
 
   // a faint scan line drifting down the chamber
-  s += `<rect x="0" y="0" width="${W}" height="${Q}" fill="#7dffa0" opacity="0.06"><animateTransform attributeName="transform" type="translate" values="0 0;0 ${H}" dur="6.5s" repeatCount="indefinite"/></rect>`
+  s += `<rect x="0" y="0" width="${W}" height="${Q}" fill="#7dffa0" opacity="0.06"><animateTransform attributeName="transform" type="translate" values="0 ${-Q};0 ${H}" dur="${FCH_AMB(3)}s" repeatCount="indefinite"/></rect>`
   return s
 }
 
@@ -1306,6 +1493,8 @@ function janewayCoffee() {
   const sx = 6, sy = 3, sw = 80, sh = 20
   const ncx = 66, ncy = 12 // nebula core
   const kt = (list: number[]) => list.map(t => +(t / D).toFixed(4)).join(';')
+  // ambient loops run on whole fractions of the story, so the frame at D matches t=0
+  const per = (n: number) => +(D / n).toFixed(5)
 
   // ---------- the story (seconds) ----------
   // 0.0-1.8   calm: the bridge, the nebula turning, her mug steaming at her side
@@ -1316,13 +1505,24 @@ function janewayCoffee() {
   // 11.5-12.5 a determined hop and a little nod
   // 13.0-13.4 the claw comes down         13.6-15.8 one last satisfied sip
   // 15.8-17.17 calm again, mug at her side, the nebula still turning
-  const tMugMid: [number, number][] = [[1.8, 2.3], [5.2, 5.6], [13.6, 14.1], [15.4, 15.8]]
+  // the mug travels through five drawings, one art pixel apart, ~0.1 s each:
+  // side -> P1 -> P2 -> P3 (halfway) -> P4 -> at her lips, and back down
+  const lift = (a: number): [number, number][][] => [[[a, a + 0.1]], [[a + 0.1, a + 0.2]], [[a + 0.2, a + 0.35]], [[a + 0.35, a + 0.5]]]
+  const lower = (a: number): [number, number][][] => [[[a + 0.3, a + 0.4]], [[a + 0.2, a + 0.3]], [[a + 0.1, a + 0.2]], [[a, a + 0.1]]]
+  const tMugStep: [number, number][][] = [0, 1, 2, 3].map(i => [lift(1.8)[i], lower(5.2)[i], lift(13.6)[i], lower(15.4)[i]].flat())
   const tMugUp: [number, number][] = [[2.3, 5.2], [14.1, 15.4]]
-  const tMugSide = complement(merge([...tMugMid, ...tMugUp]), dur)
+  const tMugSide = complement(merge([...tMugStep.flat(), ...tMugUp]), dur)
   const tClosed: [number, number][] = [[2.5, 5.0], [14.3, 15.3]]
+  const tHalf: [number, number][] = [[2.4, 2.5], [5.0, 5.1], [14.2, 14.3], [15.3, 15.4]]
   const tGaze: [number, number][] = [[5.8, 8.0]]
   const tLit: [number, number][] = [[8.0, 13.2]]
   const tArmMid: [number, number][] = [[9.4, 9.8], [13.0, 13.4]]
+  // the claw reaches out in three growing drawings on the way up, and back
+  const tReach: [number, number][][] = [
+    [[9.4, 9.5], [13.27, 13.4]],
+    [[9.5, 9.65], [13.13, 13.27]],
+    [[9.65, 9.8], [13.0, 13.13]],
+  ]
   const tPoint: [number, number][] = [[9.8, 13.0]]
   const tBlink: [number, number][] = [[1.2, 1.35], [7.3, 7.45], [16.0, 16.15]]
 
@@ -1364,14 +1564,14 @@ function janewayCoffee() {
 
   // the nebula on the screen: the glows turn slowly and the core breathes, never flares
   let scr = jcNebula(sx, sy, sw, sh, ncx, ncy).svg()
-  scr += `<g transform="translate(${(ncx + 0.5) * Q} ${(ncy + 0.5) * Q})"><g><ellipse cx="14" cy="0" rx="30" ry="12" fill="url(#jcTeal)"/><ellipse cx="-18" cy="3" rx="22" ry="9" fill="url(#jcSpill)"/><animateTransform attributeName="transform" type="rotate" values="0;110" dur="${D}s" repeatCount="indefinite"/></g></g>`
+  scr += `<g transform="translate(${(ncx + 0.5) * Q} ${(ncy + 0.5) * Q})"><g><ellipse cx="14" cy="0" rx="30" ry="12" fill="url(#jcTeal)"/><ellipse cx="-18" cy="3" rx="22" ry="9" fill="url(#jcSpill)"/><animateTransform attributeName="transform" type="rotate" values="0;110;0" keyTimes="0;0.5;1" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1" dur="${D}s" repeatCount="indefinite"/></g></g>`
   scr += `<ellipse cx="${(ncx + 0.5) * Q}" cy="${(ncy + 0.5) * Q}" rx="34" ry="18" fill="url(#jcCore)" opacity="0.8"><animate attributeName="opacity" values="0.8;0.95;0.8" dur="${D / 2}s" repeatCount="indefinite"/></ellipse>`
   // slow, soft twinkles in the cloud
   const sparks = [[60, 7], [72, 15], [48, 10], [80, 6], [55, 18], [70, 5], [36, 14], [24, 8], [84, 19], [64, 16]]
   sparks.forEach(([x, y], i) => {
     const g = new Pix().set(x - 1, y, '#e8c8ff').set(x + 1, y, '#e8c8ff').set(x, y - 1, '#e8c8ff').set(x, y + 1, '#e8c8ff')
-    const d = 3.2 + (i % 4) * 0.7
-    scr += `<g opacity="0">${g.svg()}${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0;0.8;0;0" keyTimes="0;0.35;0.7;1" dur="${d}s" begin="${(i * 0.53).toFixed(2)}s" repeatCount="indefinite"/></g>`
+    const d = per([5, 4, 4, 3][i % 4])
+    scr += `<g opacity="0">${g.svg()}${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0;0.8;0;0" keyTimes="0;0.35;0.7;1" dur="${d}s" begin="${(-i * 0.53).toFixed(2)}s" repeatCount="indefinite"/></g>`
   })
   // faint distant stars
   let seed = 41
@@ -1381,8 +1581,8 @@ function janewayCoffee() {
     const y = sy + Math.floor(rnd() * sh)
     scr += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#e6dcff" opacity="${(0.25 + rnd() * 0.4).toFixed(2)}"/>`
   }
-  // a faint scanline drifting down the screen
-  scr += `<rect x="${sx * Q}" y="0" width="${sw * Q}" height="${Q}" fill="#ffffff" opacity="0.05"><animate attributeName="y" values="${sy * Q};${(sy + sh) * Q}" dur="5.4s" repeatCount="indefinite"/></rect>`
+  // a faint scanline drifting down the screen, from just above it to just below (both ends hidden by the clip)
+  scr += `<rect x="${sx * Q}" y="0" width="${sw * Q}" height="${Q}" fill="#ffffff" opacity="0.05"><animate attributeName="y" values="${(sy - 1) * Q};${(sy + sh) * Q}" dur="${per(3)}s" repeatCount="indefinite"/></rect>`
   back += `<g clip-path="url(#jcScr)">${scr}</g>`
   // screen glass glint
   back += new Pix().rect(sx, sy, sw, 1, '#ffffff').svg().replace('<rect', '<rect opacity="0.08"')
@@ -1396,7 +1596,7 @@ function janewayCoffee() {
 
   // console lights, slowly dimming and brightening
   ;[[8, 32, '#e89a4a'], [52, 29, '#6f8fd8'], [84, 32, '#c26a8a'], [60, 36, '#e8b06a'], [76, 36, '#6f8fd8']].forEach(([x, y, c], i) => {
-    s += `<rect x="${(x as number) * Q}" y="${(y as number) * Q}" width="${Q * 2}" height="${Q}" fill="${c}"><animate attributeName="opacity" values="1;0.35;1" dur="${(2.1 + i * 0.5).toFixed(1)}s" repeatCount="indefinite"/></rect>`
+    s += `<rect x="${(x as number) * Q}" y="${(y as number) * Q}" width="${Q * 2}" height="${Q}" fill="${c}"><animate attributeName="opacity" values="1;0.35;1" dur="${per([8, 7, 6, 5, 4][i])}s" repeatCount="indefinite"/></rect>`
   })
 
   // the conn console on the right, in front of the screen
@@ -1446,6 +1646,9 @@ function janewayCoffee() {
   const lids = eyeSkin([6, 12])
   for (const e of [6, 12]) lids.rect(X + e, Y + 1, 2, 1, k.skin)
 
+  const half = eyeSkin([])
+  for (const e of [6, 12]) half.rect(X + e, Y + 2, 2, 2, k.skin)
+  jan += shown(half.svg(), tHalf, dur)
   jan += shown(closed.svg(), tClosed, dur)
   jan += shown(gaze.svg(), tGaze, dur)
   jan += shown(lit.svg(), tLit, dur)
@@ -1456,8 +1659,8 @@ function janewayCoffee() {
   const steam = (mx: number, my: number, n: number) => {
     let o = ''
     for (let i = 0; i < n; i++) {
-      const d = 2.4 + i * 0.5
-      o += `<rect x="${(mx + 3 + (i % 2)) * Q}" y="${(my - 1) * Q}" width="${Q}" height="${Q * 2}" fill="#e9e2f2" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 4 : -4} -6 0 -11 t ${i % 2 ? 3 : -3} -10" dur="${d}s" begin="${i * 0.8}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.6;0" dur="${d}s" begin="${i * 0.8}s" repeatCount="indefinite"/></rect>`
+      const d = per([7, 6, 5][i])
+      o += `<rect x="${(mx + 3 + (i % 2)) * Q}" y="${(my - 1) * Q}" width="${Q}" height="${Q * 2}" fill="#e9e2f2" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 4 : -4} -6 0 -11 t ${i % 2 ? 3 : -3} -10" dur="${d}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.6;0" dur="${d}s" repeatCount="indefinite"/></rect>`
     }
     return o
   }
@@ -1466,22 +1669,41 @@ function janewayCoffee() {
   const m1x = X - 9, m1y = Y + 2
   const side2 = mugAt(m1x, m1y)
   side2.rect(X - 4, Y + 4, 1, 2, k.skin).set(X - 4, Y + 6, k.shade).rect(X - 6, Y + 7, 3, 1, k.skin).set(X - 6, Y + 7, k.light)
-  const sideSvg = side.svg() + side2.svg() + steam(m1x, m1y, 3)
-  // halfway up
-  const mid = new Pix()
-  mid.rect(X - 3, Y + 4, 3, 2, k.skin).rect(X - 3, Y + 6, 3, 1, k.shade)
-  mid.rect(X - 5, Y + 3, 2, 3, k.skin).rect(X - 5, Y + 5, 2, 1, k.shade)
-  const m3x = X - 8, m3y = Y - 1
-  const midSvg = mid.svg() + mugAt(m3x, m3y).rect(m3x + 2, m3y + 5, 3, 1, k.skin).set(m3x + 2, m3y + 5, k.light).svg() + steam(m3x, m3y, 2)
+  // in between: the mug at (mx, my), the claw under it, a forearm back to the shoulder
+  const between = (mx: number, my: number) => {
+    const q = new Pix()
+    q.rect(X - 3, Y + 4, 3, 2, k.skin).rect(X - 3, Y + 6, 3, 1, k.shade)
+    const fx = mx + 3, fy = my + 5
+    const n = Math.max(Math.abs(X - 4 - fx), Math.abs(Y + 4 - fy))
+    for (let i = 0; i <= n; i++) {
+      const xx = Math.round(fx + ((X - 4 - fx) * i) / Math.max(1, n))
+      const yy = Math.round(fy + ((Y + 4 - fy) * i) / Math.max(1, n))
+      q.rect(xx, yy, 2, 2, k.skin).set(xx, yy + 1, k.shade)
+    }
+    const m = mugAt(mx, my)
+    m.rect(mx + 2, my + 5, 3, 1, k.skin).set(mx + 2, my + 5, k.light)
+    return q.svg() + m.svg()
+  }
+  const steps: [number, number][] = [[m1x, m1y - 1], [m1x + 1, m1y - 2], [m1x + 1, m1y - 3], [m1x + 2, m1y - 4]]
   // raised to her face
   const up = new Pix()
   up.rect(X - 3, Y + 4, 3, 2, k.skin).rect(X - 3, Y + 6, 3, 1, k.shade)
   up.rect(X - 4, Y + 1, 2, 5, k.skin).rect(X - 4, Y + 1, 1, 5, k.shade)
   const m2x = X - 6, m2y = Y - 3
-  const upSvg = up.svg() + mugAt(m2x, m2y).rect(m2x + 2, m2y + 5, 3, 1, k.skin).set(m2x + 2, m2y + 5, k.light).svg() + steam(m2x, m2y, 3)
-  jan += shown(sideSvg, tMugSide, dur)
-  jan += shown(midSvg, tMugMid, dur)
+  const upSvg = up.svg() + mugAt(m2x, m2y).rect(m2x + 2, m2y + 5, 3, 1, k.skin).set(m2x + 2, m2y + 5, k.light).svg()
+  jan += shown(side.svg() + side2.svg(), tMugSide, dur)
+  steps.forEach(([mx, my], i) => (jan += shown(between(mx, my), tMugStep[i], dur)))
   jan += shown(upSvg, tMugUp, dur)
+  // one set of steam wisps, gliding along with the mug
+  const off = (dx: number, dy: number) => `${dx * Q} ${dy * Q}`
+  const sKeys: [number, string][] = [[0, off(0, 0)]]
+  for (const [a, dir] of [[1.8, 1], [5.2, -1], [13.6, 1], [15.4, -1]] as [number, number][]) {
+    const path = dir > 0 ? [off(0, 0), off(m2x - m1x, m2y - m1y)] : [off(m2x - m1x, m2y - m1y), off(0, 0)]
+    const len = dir > 0 ? 0.5 : 0.4
+    sKeys.push([a, path[0]], [a + len, path[1]])
+  }
+  sKeys.push([D, off(0, 0)])
+  jan += `<g>${steam(m1x, m1y, 3)}<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${D}s" repeatCount="indefinite" values="${sKeys.map(([, v]) => v).join(';')}" keyTimes="${kt(sKeys.map(([t]) => t))}" keySplines="${sKeys.slice(1).map(() => '0.4 0 0.2 1').join(';')}"/></g>`
 
   // right claw: at rest, half raised, or pointing at the nebula
   jan += shown(armRestHD(k, X, Y, 'right'), complement(merge([...tPoint, ...tArmMid]), dur), dur)
@@ -1492,7 +1714,18 @@ function janewayCoffee() {
     am.rect(ax + i * 2, yy, 3, 2, k.skin).rect(ax + i * 2, yy + 2, 2, 1, k.shade).set(ax + i * 2 + 2, yy, k.rim)
   }
   am.rect(ax + 6, Y + 1, 2, 2, k.skin).set(ax + 7, Y + 1, k.light).set(ax + 6, Y + 3, k.shade)
-  jan += shown(am.svg(), tArmMid, dur)
+  void am
+  const reach = (n: number) => {
+    const r = new Pix()
+    for (let i = 0; i < n; i++) {
+      const yy = Y + 4 - i * 2
+      r.rect(ax + i * 2, yy, 3, 2, k.skin).rect(ax + i * 2, yy + 2, 2, 1, k.shade).set(ax + i * 2 + 2, yy, k.rim)
+    }
+    const ex = ax + n * 2, ey = Y + 4 - n * 2
+    r.rect(ex, ey, 2, 2, k.skin).set(ex + 1, ey, k.light).set(ex, ey + 2, k.shade).set(ex + 2, ey - 1, k.skin)
+    return r.svg()
+  }
+  ;[2, 3, 4].forEach((n, i) => (jan += shown(reach(n), tReach[i], dur)))
   const pt = new Pix()
   // a long diagonal arm reaching up toward the nebula
   for (let i = 0; i < 5; i++) {
@@ -1519,7 +1752,10 @@ function janewayCoffee() {
   s += `<g opacity="0">${g2.svg()}<animate attributeName="opacity" values="0;0;0.9;0;0" keyTimes="${kt([0, 8.4, 8.9, 9.9, D])}" dur="${D}s" repeatCount="indefinite"/></g>`
 
   // the determined hop, then a small nod of a hop
-  const hop = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${D}s" repeatCount="indefinite" values="0 0;0 ${-Q};0 ${-2 * Q};0 ${-Q};0 0;0 ${-Q};0 0" keyTimes="${kt([0, 11.5, 11.6, 11.85, 11.95, 12.3, 12.55])}"/>`
+  const hopV = ['0 0', '0 0', `0 ${-2 * Q}`, `0 ${-2 * Q}`, '0 0', '0 0', `0 ${-Q}`, `0 ${-Q}`, '0 0', '0 0']
+  const hopT = [0, 11.45, 11.65, 11.82, 12.0, 12.25, 12.38, 12.45, 12.6, D]
+  const hopS = ['0 0 1 1', '0.2 0.7 0.4 1', '0 0 1 1', '0.6 0 0.8 0.3', '0 0 1 1', '0.2 0.7 0.4 1', '0 0 1 1', '0.6 0 0.8 0.3', '0 0 1 1']
+  const hop = `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${D}s" repeatCount="indefinite" values="${hopV.join(';')}" keyTimes="${kt(hopT)}" keySplines="${hopS.join(';')}"/>`
   s += `<g>${jan}${hop}</g>`
   return s
 }
@@ -1590,6 +1826,17 @@ function cocChain(x: number, y0: number, y1: number) {
   return p.svg()
 }
 
+// smooth eased translate over the story: [time, x, y] in CSS px; each move eases in and out
+const COC_EASE = '0.4 0 0.2 1'
+const COC_SWING = '0.45 0 0.55 1'
+function cocTween(keys: [number, number, number][], spline = COC_EASE) {
+  const T = SCENE_SECONDS
+  const ks = [...keys]
+  if (ks[0][0] > 0) ks.unshift([0, ks[0][1], ks[0][2]])
+  if (ks[ks.length - 1][0] < T) ks.push([T, ks[ks.length - 1][1], ks[ks.length - 1][2]])
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${T}s" repeatCount="indefinite" values="${ks.map(([, x, y]) => `${x} ${y}`).join(';')}" keyTimes="${ks.map(k => +(k[0] / T).toFixed(5)).join(';')}" keySplines="${ks.slice(1).map(() => spline).join(';')}"/>`
+}
+
 function chainOfCommandHD() {
   const dur = SCENE_SECONDS
   const W = GW * Q
@@ -1648,9 +1895,11 @@ function chainOfCommandHD() {
   for (let c = 2; c < GW; c += 6) wall.rect(c, 44, 1, 4, '#100c0a')
   back += cols + wall.svg()
   // amber slit glows, slowly breathing
-  for (const cx of [17, 39, 61, 83]) {
-    back += `<ellipse cx="${(cx + 0.5) * Q}" cy="${22.5 * Q}" rx="16" ry="6" fill="url(#cocAmber)"><animate attributeName="opacity" values="0.6;1;0.6" dur="${3.2 + cx / 40}s" repeatCount="indefinite"/></ellipse>`
-  }
+  // (periods divide the story length, so the loop restart lands on the same glow)
+  ;[17, 39, 61, 83].forEach((cx, i) => {
+    const per = +(dur / [5, 4, 3, 4][i]).toFixed(4)
+    back += `<ellipse cx="${(cx + 0.5) * Q}" cy="${22.5 * Q}" rx="16" ry="6" fill="url(#cocAmber)"><animate attributeName="opacity" values="0.6;1;0.6" calcMode="spline" keyTimes="0;0.5;1" keySplines="${COC_SWING};${COC_SWING}" dur="${per}s" begin="${-i * 1.3}s" repeatCount="indefinite"/></ellipse>`
+  })
   s += `<g mask="url(#cocFade)">${back}</g>`
 
   // ---- the four lights: steady, breathing very slowly ----
@@ -1669,8 +1918,9 @@ function chainOfCommandHD() {
   // dust motes drifting through the beams
   for (let i = 0; i < 6; i++) {
     const x = 40 + i * 7
-    const d = 6 + (i % 3) * 1.7
-    s += `<rect x="${x * Q}" y="${8 * Q}" width="${Q / 2}" height="${Q / 2}" fill="#fff6d8" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 6 : -6} 20 ${i % 2 ? -2 : 3} 52" dur="${d}s" begin="${i * 1.1}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.7;0.5;0" dur="${d}s" begin="${i * 1.1}s" repeatCount="indefinite"/></rect>`
+    const d = +(dur / (i % 2 ? 2 : 3)).toFixed(4)
+    const b = (-i * 1.1).toFixed(1)
+    s += `<rect x="${x * Q}" y="${8 * Q}" width="${Q / 2}" height="${Q / 2}" fill="#fff6d8" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 6 : -6} 20 ${i % 2 ? -2 : 3} 52" dur="${d}s" begin="${b}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.7;0.5;0" dur="${d}s" begin="${b}s" repeatCount="indefinite"/></rect>`
   }
 
   // ---- the chain rail and chains ----
@@ -1683,9 +1933,10 @@ function chainOfCommandHD() {
   s += rail.svg()
   // three slow jolts against the chains; the chains swing and settle
   const jolts: [number, number][] = [[10.5, 10.95], [11.3, 11.75], [12.1, 12.55]]
-  const swayK = [0, 10.5, 10.95, 11.3, 11.75, 12.1, 12.55, 13.1, 13.7, 14.3, dur]
-  const swayV = ['0 0', '0 0', `${Q / 2} 0`, `${-Q / 2} 0`, `${Q / 2} 0`, `${-Q / 2} 0`, `${Q / 2} 0`, `${-Q / 2} 0`, `${Q / 2} 0`, '0 0', '0 0']
-  const sway = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${swayV.join(';')}" keyTimes="${kt(swayK)}"/>`
+  // the chains swing smoothly from side to side with each jolt, then settle
+  const swayK = [10.5, 10.95, 11.3, 11.75, 12.1, 12.55, 13.1, 13.7, 14.3]
+  const swayX = [0, 1, -1, 1, -1, 1, -1, 1, 0]
+  const sway = cocTween(swayK.map((t, i) => [t, (swayX[i] * Q) / 2, 0] as [number, number, number]), COC_SWING)
   s += `<g>${cocChain(px - 3, 11, py - 3)}${cocChain(px + 19, 11, py - 3)}${sway}</g>`
 
   // shadow under the suspended prisoner
@@ -1724,60 +1975,75 @@ function chainOfCommandHD() {
     p.set(edge, my + 6, '#8a8868').set(edge, my + 8, '#6a6850')
   }
   // facing away (left) at the start and the end, toward Picard (right) in between
-  const awayOn: [number, number][] = [[0, 2.4], [13.6, dur]]
-  const towardOn: [number, number][] = [[2.4, 13.6]]
+  // the turn passes through a front-facing in-between (eyes centred) for 0.1 s each way
+  const awayOn: [number, number][] = [[0, 2.35], [13.65, dur]]
+  const turnOn: [number, number][] = [[2.35, 2.45], [13.55, 13.65]]
+  const towardOn: [number, number][] = [[2.45, 13.55]]
   const raised: [number, number][] = [[5.1, 12.8]]
-  const madAway = crabHD(M, mx, my, 'left', dur, { left: [], right: [] }, [], 6.2, madredDetails('left'))
-  const madToward = crabHD(M, mx, my, 'right', dur, { left: [], right: raised }, [], 6.2, madredDetails('right'))
+  const blink = +(dur / 3).toFixed(4)
+  const madAway = crabHD(M, mx, my, 'left', dur, { left: [], right: [] }, [], blink, madredDetails('left'))
+  const madToward = crabHD(M, mx, my, 'right', dur, { left: [], right: raised }, [], blink, madredDetails('right'))
+  const front = clawdBody(M, mx, my, 'left').p
+  for (const e of [4, 10]) front.rect(mx + e, my + 2, 2, 3, M.skin)
+  for (const e of [5, 11]) front.rect(mx + e, my + 2, 2, 3, EYE_HD)
+  madredDetails('left')(front)
+  front.rect(mx + 17, my + 1, 1, 5, M.skin)
+  const madFront = front.svg() + armRestHD(M, mx, my, 'left') + armRestHD(M, mx, my, 'right')
   // the claw on its way up and on its way down: reaching out toward the lights
   const mid = new Pix()
   for (let i = 0; i < 4; i++) mid.rect(mx + 20 + i, my + 3 - i, 2, 1, M.skin).set(mx + 20 + i, my + 4 - i, M.shade)
   mid.rect(mx + 23, my - 3, 1, 2, M.skin).rect(mx + 26, my - 3, 1, 2, M.skin).rect(mx + 23, my - 1, 4, 1, M.skin).set(mx + 23, my - 3, M.light).set(mx + 26, my - 3, M.light)
-  let mad = shown(madAway, awayOn, dur) + shown(madToward, towardOn, dur)
+  let mad = shown(madAway, awayOn, dur) + shown(madFront, turnOn, dur) + shown(madToward, towardOn, dur)
   mad += shown(mid.svg(), [[4.75, 5.1], [12.8, 13.25]], dur)
-  // the walk: a few unhurried steps in, later the same steps back out
-  const walk: [number, number, number][] = [[0, -6, 0]]
-  for (let k = 0; k < 6; k++) {
-    const t = 2.8 + k * 0.3
-    walk.push([t, -5 + k, -1], [t + 0.15, -5 + k, 0])
+  // the walk: an unhurried glide in, later the same glide back out, with a soft
+  // bob on each of the six steps (the bob rides inside the glide)
+  const glide = cocTween([[0, -6 * Q, 0], [2.7, -6 * Q, 0], [4.45, 0, 0], [13.9, 0, 0], [15.65, -6 * Q, 0]], '0.42 0 0.58 1')
+  const bobK: [number, number, number][] = [[0, 0, 0]]
+  for (const t0 of [2.8, 14.0]) {
+    for (let k = 0; k < 6; k++) {
+      const t = t0 + k * 0.3
+      bobK.push([t, 0, 0], [t + 0.08, 0, -Q], [t + 0.2, 0, 0])
+    }
   }
-  for (let k = 0; k < 6; k++) {
-    const t = 14.0 + k * 0.3
-    walk.push([t, -1 - k, -1], [t + 0.15, -1 - k, 0])
-  }
-  const walkAnim = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${walk.map(([, x, y]) => `${x * Q} ${y * Q}`).join(';')}" keyTimes="${kt(walk.map(w => w[0]))}"/>`
-  s += `<g>${mad}${walkAnim}</g>`
+  s += `<g>${glide}<g>${mad}${cocTween(bobK)}</g></g>`
 
-  // ---- Picard: hung by the wrists ----
+  // ---- Picard: hung by the wrists (both claws up for the whole story) ----
   const P = COC_PICARD
-  let pic = crabHD(
-    P, px, py, 'left', dur,
-    { left: [[0, dur]], right: [[0, dur]] },
-    [],
-    4.3,
-    p => {
-      // rumpled uniform: a torn seam and a crease
-      p.set(px + 13, py + 8, '#7a161c').set(px + 14, py + 9, '#7a161c').set(px + 5, py + 8, '#c94048')
-      // grey fringe of hair at the temples
-      p.rect(px, py + 2, 1, 2, '#8e8a86').rect(px + 17, py + 2, 1, 2, '#b4b0aa')
-      // furrowed brow
-      p.rect(px + 3, py + 1, 4, 1, P.shade).rect(px + 9, py + 1, 4, 1, P.shade)
-    },
-  )
-  // exhausted: heavy, half-closed eyelids (again while he hesitates)
+  const pb = clawdBody(P, px, py, 'left')
+  // rumpled uniform: a torn seam and a crease
+  pb.p.set(px + 13, py + 8, '#7a161c').set(px + 14, py + 9, '#7a161c').set(px + 5, py + 8, '#c94048')
+  // grey fringe of hair at the temples
+  pb.p.rect(px, py + 2, 1, 2, '#8e8a86').rect(px + 17, py + 2, 1, 2, '#b4b0aa')
+  // furrowed brow
+  pb.p.rect(px + 3, py + 1, 4, 1, P.shade).rect(px + 9, py + 1, 4, 1, P.shade)
+  let pic = pb.p.svg() + armUpHD(P, px, py, 'left') + armUpHD(P, px, py, 'right')
+  const blinkLids = new Pix()
+  for (const e of pb.ex) blinkLids.rect(px + e, py + 2, 2, 3, P.skin)
+  pic += `<g opacity="0">${blinkLids.svg()}<animate attributeName="opacity" calcMode="discrete" dur="${+(dur / 4).toFixed(4)}s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.92;0.95"/></g>`
+  // exhausted: heavy, half-closed eyelids; they lift and drop through a lighter lid.
+  // He sinks back into them after the shouting, so the end matches the start.
   const lids = new Pix()
   for (const e of [4, 10]) lids.rect(px + e, py + 2, 2, 2, P.shade).rect(px + e, py + 2, 2, 1, P.skin)
-  pic += shown(lids.svg(), [[0, 4.9], [9.7, 10.3]], dur)
-  // he looks up and right at the fifth light
+  const lidsLight = new Pix()
+  for (const e of [4, 10]) lidsLight.rect(px + e, py + 2, 2, 1, P.shade)
+  pic += shown(lids.svg(), [[0, 4.75], [9.8, 10.2], [16.45, dur]], dur)
+  pic += shown(lidsLight.svg(), [[4.75, 4.9], [9.7, 9.8], [10.2, 10.3], [16.3, 16.45]], dur)
+  // he looks up and right at the fifth light, his eyes travelling there and back
   const glance = new Pix()
   for (const e of [4, 10]) glance.rect(px + e, py + 2, 2, 3, P.skin)
   for (const e of [6, 12]) glance.rect(px + e, py + 1, 2, 3, EYE_HD)
-  pic += shown(glance.svg(), [[8.0, 9.7]], dur)
-  // defiance: brows drawn down hard
+  const glanceMid = new Pix()
+  for (const e of [4, 10]) glanceMid.rect(px + e, py + 2, 2, 3, P.skin)
+  for (const e of [5, 11]) glanceMid.rect(px + e, py + 2, 2, 3, EYE_HD)
+  pic += shown(glanceMid.svg(), [[7.9, 8.0], [9.6, 9.7]], dur)
+  pic += shown(glance.svg(), [[8.0, 9.6]], dur)
+  // defiance: brows drawn down hard (through a half-drawn brow each way)
   const brows = new Pix()
   brows.set(px + 3, py + 1, P.shade).rect(px + 5, py + 1, 2, 1, '#6e2f20').set(px + 7, py + 2, '#6e2f20')
   brows.set(px + 9, py + 2, '#6e2f20').rect(px + 10, py + 1, 2, 1, '#6e2f20').set(px + 13, py + 1, P.shade)
-  pic += shown(brows.svg(), [[10.3, dur]], dur)
+  const browsMid = new Pix().rect(px + 5, py + 1, 2, 1, '#6e2f20').rect(px + 10, py + 1, 2, 1, '#6e2f20')
+  pic += shown(browsMid.svg(), [[10.3, 10.4], [16.0, 16.15]], dur)
+  pic += shown(brows.svg(), [[10.4, 16.0]], dur)
   // iron manacles at both wrists
   const cuffs = new Pix()
   for (const ax of [px - 3, px + 19]) {
@@ -1785,17 +2051,22 @@ function chainOfCommandHD() {
   }
   pic += cuffs.svg()
   // sweat running down his head
-  pic += `<rect x="${(px + 15) * Q}" y="${(py + 1) * Q}" width="${Q}" height="${Q}" fill="#cfe4ff" opacity="0"><animate attributeName="y" values="${(py + 1) * Q};${(py + 5) * Q}" dur="2.5s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.9;0.9;0" keyTimes="0;0.1;0.8;1" dur="2.5s" repeatCount="indefinite"/></rect>`
-  // the shout: mouth wide open, a few strokes of sound
-  const shout = new Pix().rect(px + 6, py + 4, 4, 2, '#3a0f16').rect(px + 7, py + 5, 2, 1, '#8e2a32')
-  for (const [sx, sy] of [[px - 7, py + 1], [px - 8, py + 4], [px - 7, py + 7]] as [number, number][]) shout.rect(sx, sy, 2, 1, '#e8d8b8')
-  pic += shown(shout.svg(), [[10.5, 12.7]], dur)
-  // body: sagging until he gathers himself, then three jolts upward
-  const bodyK = [0, 10.3]
-  const bodyV = [`0 ${Q}`, '0 0']
-  for (const [a, b] of jolts) bodyK.push(a, b), bodyV.push(`0 ${-Q}`, '0 0')
-  const bodyAnim = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${bodyV.join(';')}" keyTimes="${kt(bodyK)}"/>`
-  s += `<g>${pic}${bodyAnim}</g>`
+  const sw = +(dur / 7).toFixed(4)
+  pic += `<rect x="${(px + 15) * Q}" y="${(py + 1) * Q}" width="${Q}" height="${Q}" fill="#cfe4ff" opacity="0"><animate attributeName="y" values="${(py + 1) * Q};${(py + 5) * Q}" calcMode="spline" keyTimes="0;1" keySplines="0.5 0 0.9 0.6" dur="${sw}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.9;0.9;0" keyTimes="0;0.1;0.8;1" dur="${sw}s" repeatCount="indefinite"/></rect>`
+  // the shout: the mouth opens through a small 'o', a few strokes of sound fade in and out
+  const mouthMid = new Pix().rect(px + 7, py + 5, 2, 1, '#3a0f16')
+  const mouth = new Pix().rect(px + 6, py + 4, 4, 2, '#3a0f16').rect(px + 7, py + 5, 2, 1, '#8e2a32')
+  pic += shown(mouthMid.svg(), [[10.5, 10.6], [12.6, 12.7]], dur)
+  pic += shown(mouth.svg(), [[10.6, 12.6]], dur)
+  const strokes = new Pix()
+  for (const [sx, sy] of [[px - 7, py + 1], [px - 8, py + 4], [px - 7, py + 7]] as [number, number][]) strokes.rect(sx, sy, 2, 1, '#e8d8b8')
+  pic += `<g opacity="0">${strokes.svg()}<animate attributeName="opacity" dur="${dur}s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="${kt([0, 10.5, 10.75, 12.5, 12.8, dur])}"/>${cocTween([[10.5, 0, 0], [12.8, -Q, 0]], '0.3 0.3 0.7 0.7')}</g>`
+  // body: sagging until he gathers himself, three jolts upward against the
+  // chains (each one rising and dropping over ~0.15 s), then slowly sagging again
+  const bodyK: [number, number, number][] = [[0, 0, Q], [10.0, 0, Q], [10.3, 0, 0]]
+  for (const [a, b] of jolts) bodyK.push([a, 0, 0], [a + 0.14, 0, -Q], [b - 0.06, 0, -Q], [b + 0.1, 0, 0])
+  bodyK.push([15.9, 0, 0], [16.7, 0, Q])
+  s += `<g>${pic}${cocTween(bodyK)}</g>`
 
   return s
 }
@@ -1891,10 +2162,10 @@ function qwCube() {
   // green lights deep in the hull, pulsing
   const lights = new Pix()
   ;[[58, 12], [64, 20], [71, 15], [78, 26], [61, 31], [74, 33], [82, 10], [68, 27]].forEach(([x, y]) => lights.set(x, y, '#5dff8a'))
-  s += `<g>${lights.svg()}<animate attributeName="opacity" values="0.5;1;0.5" dur="2.4s" repeatCount="indefinite"/></g>`
+  s += `<g>${lights.svg()}<animate attributeName="opacity" values="0.5;1;0.5" dur="${(SCENE_SECONDS / 7).toFixed(3)}s" repeatCount="indefinite"/></g>`
   const lights2 = new Pix()
   ;[[62, 16], [77, 19], [66, 34], [80, 30], [59, 24]].forEach(([x, y]) => lights2.set(x, y, '#9dffb5'))
-  s += `<g>${lights2.svg()}<animate attributeName="opacity" values="1;0.45;1" dur="3.1s" repeatCount="indefinite"/></g>`
+  s += `<g>${lights2.svg()}<animate attributeName="opacity" values="1;0.45;1" dur="${(SCENE_SECONDS / 6).toFixed(3)}s" repeatCount="indefinite"/></g>`
   return s
 }
 
@@ -1927,29 +2198,19 @@ function qwShip(x: number, y: number) {
 
 // One smooth animation on the story timeline: keys are [seconds, value]
 const QW_EASE = '0.42 0 0.58 1'
-function qwAnim(attr: string, keys: [number, string][], tag = 'animate', extra = '') {
+function qwAnim(attr: string, keys: [number, string, string?][], tag = 'animate', extra = '') {
   const T = SCENE_SECONDS
   const k = [...keys]
   if (k[0][0] > 0) k.unshift([0, k[0][1]])
   if (k[k.length - 1][0] < T) k.push([T, k[k.length - 1][1]])
   const kt = k.map(([t]) => +(t / T).toFixed(4))
   kt[kt.length - 1] = 1
-  const splines = k.slice(1).map(() => QW_EASE).join(';')
+  const splines = k.slice(1).map(x => x[2] ?? QW_EASE).join(';')
   return `<${tag} attributeName="${attr}" ${extra}dur="${T}s" repeatCount="indefinite" calcMode="spline" keySplines="${splines}" values="${k.map(([, v]) => v).join(';')}" keyTimes="${kt.join(';')}"/>`
 }
 const qwFade = (keys: [number, number][]) => qwAnim('opacity', keys.map(([t, v]) => [t, String(v)] as [number, string]))
-const qwMove = (keys: [number, number, number][]) =>
-  qwAnim('transform', keys.map(([t, x, y]) => [t, `${x} ${y}`] as [number, string]), 'animateTransform', 'type="translate" ')
-
-// the right claw half raised, on its way up or down
-function qwArmMid(k: CrabHD, x: number, y: number) {
-  const p = new Pix()
-  p.rect(x + 18, y + 4, 3, 2, k.skin)
-  p.rect(x + 20, y + 1, 2, 3, k.skin).rect(x + 21, y + 1, 1, 3, k.shade)
-  p.rect(x + 20, y, 4, 1, k.skin).rect(x + 20, y - 2, 1, 2, k.skin).rect(x + 23, y - 2, 1, 2, k.skin)
-  p.set(x + 20, y - 2, k.light).set(x + 23, y - 2, k.light)
-  return p.svg()
-}
+const qwMove = (keys: [number, number, number, string?][]) =>
+  qwAnim('transform', keys.map(([t, x, y, sp]) => [t, `${x} ${y}`, sp] as [number, string, string?]), 'animateTransform', 'type="translate" ')
 
 // the snap: a small sparkle at the claw that swells, drifts upward and fades
 function qwSnap(x: number, y: number, t: number) {
@@ -1999,10 +2260,11 @@ function qWho() {
     }
   }
   ;[[26, 3], [44, 26], [40, 40], [16, 12], [88, 42]].forEach(([x, y], i) => {
+    const tw = `dur="${(SCENE_SECONDS / [7, 6, 5, 4, 3][i]).toFixed(3)}s" begin="-${i * 0.6}s"`
     const glow = new Pix()
     glow.set(x - 1, y, '#bfa8ee').set(x + 1, y, '#bfa8ee').set(x, y - 1, '#bfa8ee').set(x, y + 1, '#bfa8ee')
-    back += `<g>${glow.svg()}<animate attributeName="opacity" values="0.15;0.8;0.15" dur="${2.6 + i * 0.7}s" begin="${i * 0.6}s" repeatCount="indefinite"/></g>`
-    back += `<g>${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0.6;1;0.6" dur="${2.6 + i * 0.7}s" begin="${i * 0.6}s" repeatCount="indefinite"/></g>`
+    back += `<g>${glow.svg()}<animate attributeName="opacity" values="0.15;0.8;0.15" ${tw} repeatCount="indefinite"/></g>`
+    back += `<g>${new Pix().set(x, y, '#ffffff').svg()}<animate attributeName="opacity" values="0.6;1;0.6" ${tw} repeatCount="indefinite"/></g>`
   })
   // System J-25: the sky slowly turns sickly green while the Borg are here
   back += `<rect width="${W}" height="${H}" fill="#0f3a22" opacity="0">${qwFade([[cubeIn[0], 0], [cubeIn[1] + 0.4, 0.42], [cubeOut[0], 0.42], [cubeOut[1], 0]])}</rect>`
@@ -2019,8 +2281,10 @@ function qWho() {
   const sy = 7
   const hold: [number, number] = [-4, -1]
   const pulled: [number, number] = [6, 4]
-  const shipKeys: [number, number, number][] = [
-    [0, 36, -6], [beamOut[0], ...hold], [drag[0], ...hold], [drag[1], ...pulled], [beamBack[1], ...pulled], [T, -16, -2],
+  const shipKeys: [number, number, number, string?][] = [
+    [0, 36, -6], [beamOut[0], ...hold], [drag[0], ...hold], [drag[1], ...pulled], [beamBack[1] + 0.3, ...pulled],
+    // released: it flies on off the left edge, then glides back in from the right to its opening spot
+    [15.7, -112, 0, '0.5 0 0.85 0.6'], [15.71, 126, -6, '0 0 1 1'], [T, 36, -6, '0.2 0.55 0.45 1'],
   ]
 
   // tractor beam: narrow at the cube's emitter, spreading over the ship; it reaches out
@@ -2044,13 +2308,11 @@ function qWho() {
 
   // the ship, with a soft green lock halo and a slow 1 px shudder while it is held
   const halo = `<ellipse cx="${(sx + 11) * Q}" cy="${(sy + 4) * Q}" rx="30" ry="14" fill="url(#qwLock)" opacity="0">${qwFade([[beamOut[1] - 0.3, 0], [beamOut[1] + 0.7, 1], [beamBack[0], 1], [beamBack[1] + 0.4, 0]])}</ellipse>`
-  const jig = ['0 0', '1 0', '1 1', '0 1']
-  const jv = ['0 0']
-  const jt = [0]
+  const jig: [number, number, number][] = [[drag[0], 0, 0]]
   let n = 0
-  for (let t = drag[0]; t < beamBack[0]; t += 0.35) jt.push(+(t / T).toFixed(4)), jv.push(jig[n++ % jig.length])
-  jt.push(+(beamBack[0] / T).toFixed(4)), jv.push('0 0')
-  const shudder = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${T}s" repeatCount="indefinite" values="${jv.join(';')}" keyTimes="${jt.join(';')}"/>`
+  for (let t = drag[0] + 0.4; t < beamBack[0] - 0.2; t += 0.4) jig.push([t, n % 2 ? 0 : 1, n++ % 2 ? 0 : 1])
+  jig.push([beamBack[0], 0, 0])
+  const shudder = qwMove(jig)
   s += `<g>${qwMove(shipKeys)}${halo}<g>${qwShip(sx, sy)}${shudder}</g></g>`
 
   // ---- Q: Starfleet captain's red, four pips, one eyebrow up
@@ -2062,29 +2324,31 @@ function qWho() {
     p.rect(qx + 4, qy + 7, 2, 2, '#e8c547').set(qx + 4, qy + 7, '#fff3b0')
   }
   const brow = '#5a2a1c'
-  const lookingLeft: [number, number][] = [[0, turn1], look]
-  const lookingRight: [number, number][] = [[turn1, look[0]], [look[1], T]]
-  const raised: [number, number][] = [[4.1, 6.0], [12.75, 14.25]]
-  const midArm: [number, number][] = [[3.7, 4.1], [6.0, 6.4], [12.4, 12.75], [14.25, 14.65]]
-  // facing out at us (left): one eye half-lidded, the other brow arched
-  const qLeft = crabHD(QW_Q, qx, qy, 'left', T, { left: [], right: [] }, [], 4.7, p => {
-    p.rect(qx + 4, qy + 2, 2, 1, QW_Q.shade)
-    p.set(qx + 9, qy + 1, brow).rect(qx + 10, qy, 2, 1, brow).set(qx + 12, qy + 1, brow)
-    insignia(p)
-  })
-  // facing the ship (right)
-  const qRight = crabHD(QW_Q, qx, qy, 'right', T, { left: [], right: raised }, [], 4.3, p => {
-    p.rect(qx + 6, qy + 2, 2, 1, QW_Q.shade)
-    p.set(qx + 11, qy + 1, brow).rect(qx + 12, qy, 2, 1, brow).set(qx + 14, qy + 1, brow)
-    insignia(p)
-  })
-  // the open claw closes on each snap
+  const k = QW_Q
+  const turnBack = 15.3 // after the cube is gone he turns back to face us
+  const TS = 0.35 // a turn takes this long
+  // the face: 0 = looking out at us (left), 1 = at the ship (right)
+  const face: [number, number][] = [[turn1, 0], [turn1 + TS, 1], [look[0], 1], [look[0] + TS, 0], [look[1], 0], [look[1] + TS, 1], [turnBack, 1], [turnBack + TS, 0]]
+  const { p: qb } = clawdBody(k, qx, qy, 'left')
+  qb.rect(qx + 4, qy + 2, 2, 3, k.skin).rect(qx + 10, qy + 2, 2, 3, k.skin)
+  insignia(qb)
+  let qs = qb.svg() + armRestHD(k, qx, qy, 'left') + armRestHD(k, qx, qy, 'right')
+  // light and shade on the body edges cross-fade as he turns
+  const edgeR = new Pix().rect(qx, qy + 1, 1, 5, k.shade).rect(qx + 17, qy + 1, 1, 5, k.rim).set(qx, qy + 8, k.lowerShade!).set(qx + 17, qy + 8, k.lower!)
+  qs += `<g opacity="0">${edgeR.svg()}${qwFade(face)}</g>`
+  // eyes (one half-lidded), the arched brow and the blinking lids glide together
+  const fp = new Pix().rect(qx + 4, qy + 2, 2, 3, EYE_HD).rect(qx + 10, qy + 2, 2, 3, EYE_HD).rect(qx + 4, qy + 2, 2, 1, k.shade)
+  fp.set(qx + 9, qy + 1, brow).rect(qx + 10, qy, 2, 1, brow).set(qx + 12, qy + 1, brow)
+  const lids = new Pix().rect(qx + 4, qy + 2, 2, 3, k.skin).rect(qx + 10, qy + 2, 2, 3, k.skin)
+  qs += `<g>${fp.svg()}<g opacity="0">${lids.svg()}<animate attributeName="opacity" calcMode="discrete" dur="${(T / 4).toFixed(4)}s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.92;0.95"/></g>${qwMove(face.map(([t, v]) => [t, v * 2 * Q, 0]))}</g>`
+  // the right claw rises smoothly out of the shoulder (clipped there), snaps shut, sinks back
   const cx = qx + 18
   const cy = qy - 8
-  const closed = new Pix().rect(cx + 1, cy + 1, 2, 2, QW_Q.skin).set(cx + 1, cy, QW_Q.light).set(cx + 2, cy, QW_Q.light)
-  let qs = shown(qLeft, lookingLeft, T) + shown(qRight, lookingRight, T)
-  qs += shown(qwArmMid(QW_Q, qx, qy), midArm, T)
-  qs += shown(closed.svg(), [[snap1, 6.0], [snap2, 14.25]], T)
+  const UP = '0.25 0.6 0.4 1'
+  const arm: [number, number, number, string?][] = [[3.7, 0, 12 * Q], [4.15, 0, 0, UP], [6.0, 0, 0], [6.4, 0, 12 * Q], [12.4, 0, 12 * Q], [12.8, 0, 0, UP], [14.25, 0, 0], [14.65, 0, 12 * Q]]
+  const half = new Pix().rect(cx + 1, cy + 1, 2, 1, k.skin)
+  const closed = new Pix().rect(cx + 1, cy, 2, 1, k.light)
+  qs += `<clipPath id="qwArmClip"><rect x="${(qx + 17) * Q}" y="${(qy - 9) * Q}" width="${7 * Q}" height="${13 * Q}"/></clipPath><g clip-path="url(#qwArmClip)"><g transform="translate(0 ${12 * Q})">${armUpHD(k, qx, qy, 'right')}${shown(half.svg(), [[snap1 - 0.09, 6.4], [snap2 - 0.09, 14.65]], T)}${shown(closed.svg(), [[snap1, 6.4], [snap2, 14.65]], T)}${qwMove(arm)}</g></g>`
   // green rim light from the cube on his right side, coming and going with it
   const rim = new Pix().rect(qx + 17, qy + 1, 1, 5, '#8fe0a0').rect(qx + 18, qy + 4, 3, 1, '#8fe0a0')
   qs += `<g opacity="0">${rim.svg()}${qwFade([[cubeIn[0], 0], [cubeIn[1], 0.8], [cubeOut[0], 0.8], [cubeOut[1], 0]])}</g>`
@@ -2119,19 +2383,21 @@ function ctRnd(seed: number) {
   return () => ((s = (s * 9301 + 49297) % 233280) / 233280)
 }
 
-// translate jitter, discrete steps between t0 and t1 (seconds), amp in CSS px
+// translate jitter between t0 and t1 (seconds), amp in CSS px: an eased sway
+// from one offset to the next, starting and ending at rest
 function ctJitter(t0: number, t1: number, step: number, amp: number, dur: number, seed: number) {
   const r = ctRnd(seed)
-  const times = [0]
-  const vals = ['0 0']
-  for (let t = t0; t < t1 - 1e-6; t += step) {
+  const times = [0, t0 / dur]
+  const vals = ['0 0', '0 0']
+  for (let t = t0 + step; t < t1 - step / 2; t += step) {
     times.push(t / dur)
     const dx = Math.round((r() * 2 - 1) * amp)
     const dy = Math.round((r() * 2 - 1) * amp * 0.6)
     vals.push(`${dx} ${dy}`)
   }
-  times.push(t1 / dur), vals.push('0 0')
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${times.map(t => +t.toFixed(4)).join(';')}"/>`
+  times.push(t1 / dur, 1), vals.push('0 0', '0 0')
+  const splines = Array(vals.length - 1).fill('0.45 0 0.55 1').join(';')
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${times.map(t => +t.toFixed(4)).join(';')}" keySplines="${splines}"/>`
 }
 
 // Voyager seen from above, bow to the right: 32 x 13 art pixels
@@ -2222,6 +2488,15 @@ function ctArmMid(k: CrabHD, x: number, y: number) {
   return p.svg()
 }
 
+// the very first lift: the claw just leaving the armrest
+function ctArmLow(k: CrabHD, x: number, y: number) {
+  const p = new Pix()
+  p.rect(x + 18, y + 4, 3, 2, k.skin).rect(x + 20, y + 3, 2, 2, k.skin).rect(x + 18, y + 6, 2, 1, k.shade).set(x + 21, y + 5, k.shade)
+  p.rect(x + 21, y + 1, 1, 2, k.skin).rect(x + 23, y + 1, 1, 2, k.skin).rect(x + 21, y + 2, 3, 1, k.skin)
+  p.set(x + 21, y + 1, k.light).set(x + 23, y + 1, k.light)
+  return p.svg()
+}
+
 function caretaker() {
   const T = SCENE_SECONDS
   const W = GW * Q
@@ -2236,6 +2511,10 @@ function caretaker() {
   const FADE1 = 11.0 // the Delta Quadrant is all that is left
   const LOOK = 11.6 // Janeway looks up at the array
   const ARM = 12.5 // and raises her claw
+  const BACK0 = 15.6 // the replay has no veil: from here everything eases back to its t=0 spot
+  const RET0 = 13.4 // the plasma starts gathering again, slowly (3.8 s), for the next showing
+  // ambient loops run on whole fractions of the story so t=T matches t=0
+  const per = (n: number) => +(T / n).toFixed(5)
 
   let s = `<defs>
     <linearGradient id="ctFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
@@ -2263,15 +2542,15 @@ function caretaker() {
   ;[[28, 5], [52, 3], [60, 14], [40, 9], [88, 30]].forEach(([x, y], i) => {
     const glow = new Pix()
     glow.set(x - 1, y, '#a8c4ff').set(x + 1, y, '#a8c4ff').set(x, y - 1, '#a8c4ff').set(x, y + 1, '#a8c4ff')
-    calm += `<g>${glow.svg()}<animate attributeName="opacity" values="0.2;0.8;0.2" dur="${2.6 + i * 0.6}s" begin="${i * 0.5}s" repeatCount="indefinite"/></g>`
+    calm += `<g>${glow.svg()}<animate attributeName="opacity" values="0.2;0.8;0.2" dur="${per([7, 6, 5, 4, 8][i])}s" begin="${-i * 0.5}s" repeatCount="indefinite"/></g>`
     calm += new Pix().set(x, y, '#ffffff').svg()
   })
   const ax = 77
   const ay = 11
-  calm += `<circle cx="${(ax + 0.5) * Q}" cy="${(ay + 0.5) * Q}" r="30" fill="url(#ctArrG)"><animate attributeName="opacity" values="0.75;1;0.75" dur="4s" repeatCount="indefinite"/></circle>`
+  calm += `<circle cx="${(ax + 0.5) * Q}" cy="${(ay + 0.5) * Q}" r="30" fill="url(#ctArrG)"><animate attributeName="opacity" values="0.75;1;0.75" dur="${per(4)}s" repeatCount="indefinite"/></circle>`
   calm += ctArray(ax, ay)
   ;[[ax - 9, ay - 7], [ax + 10, ay + 3], [ax - 6, ay + 9], [ax + 4, ay - 9]].forEach(([x, y], i) => {
-    calm += `<g>${new Pix().set(x, y, '#9fe4ff').svg()}<animate attributeName="opacity" values="1;0.3;1" dur="${2 + i * 0.4}s" repeatCount="indefinite"/></g>`
+    calm += `<g>${new Pix().set(x, y, '#9fe4ff').svg()}<animate attributeName="opacity" values="1;0.3;1" dur="${per([8, 7, 6, 5][i])}s" repeatCount="indefinite"/></g>`
   })
 
   // ---- the Badlands on top: plasma currents drifting slowly, then dissolving ----
@@ -2291,8 +2570,11 @@ function caretaker() {
       if (c) clouds.set(x, y, c)
     }
   }
-  storm += `<g>${clouds.svg()}<animateTransform attributeName="transform" type="translate" values="0 0;${-12 * Q} 0" dur="${T}s" repeatCount="indefinite"/></g>`
-  const stormG = `<g>${storm}<animate attributeName="opacity" dur="${T}s" repeatCount="indefinite" values="1;1;0;0" keyTimes="0;${kt([FADE0, FADE1])};1"/></g>`
+  const drift = (12 * Q) / T // px per second, as before
+  const hid = FADE1 + 0.2
+  storm += `<g>${clouds.svg()}<animateTransform attributeName="transform" type="translate" calcMode="discrete" values="0 0;${(drift * T).toFixed(2)} 0" keyTimes="0;${k(hid)}" dur="${T}s" repeatCount="indefinite"/><animateTransform attributeName="transform" type="translate" additive="sum" values="0 0;${(-drift * T).toFixed(2)} 0" dur="${T}s" repeatCount="indefinite"/></g>`
+  // the plasma dissolves, and gathers again slowly for the next showing
+  const stormG = `<g>${storm}<animate attributeName="opacity" dur="${T}s" repeatCount="indefinite" values="1;1;0;0;1" keyTimes="0;${kt([FADE0, FADE1, RET0])};1" calcMode="spline" keySplines="0 0 1 1;0.3 0 0.7 1;0 0 1 1;0.3 0 0.7 1"/></g>`
 
   // ---- the bridge floor: dark, console lights glowing softly on the right ----
   const floor = new Pix().rect(0, 42, GW, 6, '#150f22').rect(0, 42, GW, 1, '#2a2140')
@@ -2300,24 +2582,24 @@ function caretaker() {
   let floorSvg = floor.svg()
   const pads: [number, string][] = [[43, '#f2b866'], [47, '#c9a7ff'], [51, '#ff8a5a'], [57, '#8fb8ff'], [61, '#f2b866'], [67, '#c9a7ff'], [73, '#ff8a5a'], [79, '#8fb8ff'], [83, '#f2b866']]
   pads.forEach(([x, c], i) => {
-    floorSvg += `<g>${new Pix().rect(x, 44, 2, 1, c).svg()}<animate attributeName="opacity" values="1;0.4;1" dur="${1.8 + (i % 4) * 0.5}s" begin="${i * 0.3}s" repeatCount="indefinite"/></g>`
+    floorSvg += `<g>${new Pix().rect(x, 44, 2, 1, c).svg()}<animate attributeName="opacity" values="1;0.4;1" dur="${per([9, 7, 6, 5][i % 4])}s" begin="${-i * 0.3}s" repeatCount="indefinite"/></g>`
   })
 
   // ---- Voyager ----
   const ship = ctShip()
   const halo = `<ellipse cx="${7 * Q}" cy="${1.5 * Q}" rx="16" ry="5" fill="url(#ctNacG)"/><ellipse cx="${7 * Q}" cy="${11.5 * Q}" rx="16" ry="5" fill="url(#ctNacG)"/>`
   // centre of the ship in CSS px over the story: cruise, caught, pulled away, arrives
-  const PT = [0, CAUGHT, 7.4, 10.2, 12.4, T]
-  const pos = ['132 33', '132 33', '138 34', '158 46', '114 58', '110 58']
-  const rot = ['0', '0', '-10', '-16', '0', '0']
-  const scl = ['1', '1', '0.95', '0.55', '0.85', '0.85']
+  const PT = [0, CAUGHT, 7.4, 10.2, 12.4, BACK0 - 0.3, T]
+  const pos = ['132 33', '132 33', '138 34', '158 46', '114 58', '111 58', '132 33']
+  const rot = ['0', '0', '-10', '-16', '0', '0', '0']
+  const scl = ['1', '1', '0.95', '0.55', '0.85', '0.85', '1']
   const anim = (type: string, vals: string[]) =>
     `<animateTransform attributeName="transform" type="${type}" dur="${T}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="0;${kt(PT.slice(1, -1))};1" calcMode="spline" keySplines="${Array(vals.length - 1).fill('0.4 0 0.6 1').join(';')}"/>`
-  const bob = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" values="0 0;0 ${Q};0 0" keyTimes="0;0.5;1" dur="3.2s" repeatCount="indefinite"/>`
+  const bob = `<animateTransform attributeName="transform" type="translate" calcMode="spline" values="0 0;0 ${Q};0 0" keyTimes="0;0.5;1" keySplines="0.45 0 0.55 1;0.45 0 0.55 1" dur="${per(5)}s" repeatCount="indefinite"/>`
   const shipG =
     `<g>${anim('translate', pos)}<g>${anim('rotate', rot)}<g>${anim('scale', scl)}` +
     `<g transform="translate(${-16 * Q} ${-6.5 * Q})"><g>${bob}<g>${ctJitter(CAUGHT, 7.6, 0.3, 2, T, 5)}` +
-    `<g>${halo}<animate attributeName="opacity" values="0.75;1;0.75" dur="2.4s" repeatCount="indefinite"/></g>${ship}` +
+    `<g>${halo}<animate attributeName="opacity" values="0.75;1;0.75" dur="${per(7)}s" repeatCount="indefinite"/></g>${ship}` +
     `</g></g></g></g></g></g>`
 
   // ---- the displacement wave: a soft shimmering band, crossing slowly ----
@@ -2330,7 +2612,7 @@ function caretaker() {
   const wave =
     `<g opacity="0"><g>` +
     `<rect x="0" y="0" width="${36 * Q}" height="${H}" fill="url(#ctWaveG)"/>` +
-    `<g opacity="0.35"><g>${shimmer.svg()}</g><animateTransform attributeName="transform" type="translate" values="0 0;0 ${-GH * Q}" dur="6s" repeatCount="indefinite"/></g>` +
+    `<g opacity="0.35"><g>${shimmer.svg()}</g><animateTransform attributeName="transform" type="translate" values="0 0;0 ${-GH * Q}" dur="${per(3)}s" repeatCount="indefinite"/></g>` +
     `<animateTransform attributeName="transform" type="translate" dur="${T}s" repeatCount="indefinite" values="${-40 * Q} 0;${-40 * Q} 0;${W + 4} 0;${W + 4} 0" keyTimes="0;${kt([WAVE0, WAVE1])};1"/>` +
     `</g><animate attributeName="opacity" dur="${T}s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;${kt([WAVE0 - 0.6, WAVE0 + 0.8, WAVE1 - 0.6, WAVE1])};1"/></g>`
 
@@ -2351,9 +2633,9 @@ function caretaker() {
   let jane = chair.svg()
   jane += crabHD(
     CT_JANEWAY, jx, jy, 'right', T,
-    { left: [], right: [[ARM, T]] },
+    { left: [], right: [[ARM, BACK0 + 0.3]] },
     [],
-    4.7,
+    per(4),
     p => {
       const A = '#a8452a'
       const AL = '#c96a3e'
@@ -2369,14 +2651,20 @@ function caretaker() {
     },
   )
   // the claw on its way up, between resting and raised
-  jane += shown(ctArmMid(CT_JANEWAY, jx, jy), [[ARM - 0.35, ARM]], T)
+  // rest -> low (0.1 s) -> diagonal (0.2 s) -> kit half-raised (0.09 s) -> up
+  // and the same way down before the replay
+  jane += shown(ctArmLow(CT_JANEWAY, jx, jy), [[ARM - 0.3, ARM - 0.2], [BACK0 + 0.5, BACK0 + 0.6]], T)
+  jane += shown(ctArmMid(CT_JANEWAY, jx, jy), [[ARM - 0.2, ARM], [BACK0 + 0.3, BACK0 + 0.5]], T)
   // looking up and to the right, at the array
+  // in two one-pixel steps: first across to the right, then up
+  const across = new Pix().rect(jx + 6, jy + 2, 9, 3, CT_JANEWAY.skin).rect(jx + 7, jy + 2, 2, 3, EYE_HD).rect(jx + 13, jy + 2, 2, 3, EYE_HD)
+  jane += shown(across.svg(), [[LOOK, LOOK + 0.12], [BACK0, BACK0 + 0.12]], T)
   const up = new Pix().rect(jx + 6, jy + 1, 9, 4, CT_JANEWAY.skin).rect(jx + 7, jy + 1, 2, 3, EYE_HD).rect(jx + 13, jy + 1, 2, 3, EYE_HD)
-  jane += shown(up.svg(), [[LOOK, T]], T)
+  jane += shown(up.svg(), [[LOOK + 0.12, BACK0]], T)
   // the chair rocks gently while the wave has the ship, then settles
   const rock = [0, 0, 2.5, -2, 2, -1.5, 1, 0, 0]
   const rockT = [0, CAUGHT, 6.6, 7.3, 8.0, 8.7, 9.4, 10.0, T]
-  scene += `<g>${jane}<animateTransform attributeName="transform" type="rotate" dur="${T}s" repeatCount="indefinite" values="${rock.map(a => `${a} ${(jx + 9) * Q} ${(jy + 14) * Q}`).join(';')}" keyTimes="0;${kt(rockT.slice(1, -1))};1"/></g>`
+  scene += `<g>${jane}<animateTransform attributeName="transform" type="rotate" dur="${T}s" repeatCount="indefinite" values="${rock.map(a => `${a} ${(jx + 9) * Q} ${(jy + 14) * Q}`).join(';')}" keyTimes="0;${kt(rockT.slice(1, -1))};1" calcMode="spline" keySplines="${Array(rock.length - 1).fill('0.45 0 0.55 1').join(';')}"/></g>`
 
   s += scene
   return s
@@ -2393,9 +2681,10 @@ function caretaker() {
 // 13.2 - 17.17 he raises the flute and plays again, softly.
 
 const INL_DUR = SCENE_SECONDS
-const INL_PLAY: [number, number][] = [[0, 6.0], [13.8, SCENE_SECONDS]]
-const INL_MOVE: [number, number][] = [[6.0, 6.6], [13.2, 13.8]] // flute half-way
-const INL_REST: [number, number][] = [[6.6, 13.2]]
+const INL_PLAY: [number, number][] = [[0, 6.05], [13.75, SCENE_SECONDS]]
+const INL_REST: [number, number][] = [[6.55, 13.25]]
+// lowering (6.05 - 6.55) and raising (13.25 - 13.75) the flute: five drawings, 0.1 s each
+const INL_TILT = (k: number): [number, number][] => [[6.05 + (k - 1) * 0.1, 6.05 + k * 0.1], [13.75 - k * 0.1, 13.75 - (k - 1) * 0.1]]
 
 // value of a piecewise-linear curve at time t (held flat beyond its ends)
 function inlAt(pts: [number, number][], t: number) {
@@ -2415,14 +2704,29 @@ function inlFade(pts: [number, number][], dur: number) {
   const vals = ts.map(t => +inlAt(pts, t).toFixed(3))
   return `<animate attributeName="opacity" dur="${dur}s" repeatCount="indefinite" values="${vals.join(';')}" keyTimes="${ts.map(t => +(t / dur).toFixed(4)).join(';')}"/>`
 }
-// a stepped move (whole art px) on the story timeline; points may start before 0
-function inlPath(pts: [number, number, number][], dur: number) {
-  let first = pts[0]
-  for (const p of pts) if (p[0] <= 0) first = p
-  const keep = pts.filter(p => p[0] > 0 && p[0] < dur)
-  const list: [number, number, number][] = [[0, first[1], first[2]], ...keep]
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${list.map(l => `${l[1] * Q} ${l[2] * Q}`).join(';')}" keyTimes="${list.map(l => +(l[0] / dur).toFixed(4)).join(';')}"/>`
+// a smooth move on the story timeline (art px), eased between points; points may lie
+// outside 0..dur, the curve is cut at both ends. Each point: [t, x, y, spline into it]
+function inlGlide(pts: [number, number, number, string?][], dur: number) {
+  const at = (t: number): [number, number] => {
+    if (t <= pts[0][0]) return [pts[0][1], pts[0][2]]
+    for (let i = 1; i < pts.length; i++) {
+      const [b, bx, by] = pts[i]
+      if (t <= b) {
+        const [a, ax, ay] = pts[i - 1]
+        const f = (t - a) / (b - a)
+        return [ax + (bx - ax) * f, ay + (by - ay) * f]
+      }
+    }
+    const l = pts[pts.length - 1]
+    return [l[1], l[2]]
+  }
+  const list: [number, number, number, string][] = [[0, ...at(0), '']]
+  for (const p of pts) if (p[0] > 0 && p[0] < dur) list.push([p[0], p[1], p[2], p[3] || '0 0 1 1'])
+  list.push([dur, ...at(dur), '0 0 1 1'])
+  const v = (n: number) => +(n * Q).toFixed(2)
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${dur}s" repeatCount="indefinite" values="${list.map(l => `${v(l[1])} ${v(l[2])}`).join(';')}" keyTimes="${list.map(l => +(l[0] / dur).toFixed(4)).join(';')}" keySplines="${list.slice(1).map(l => l[3]).join(';')}"/>`
 }
+const INL_EASE = '0.4 0 0.6 1'
 
 function inlHex(h: string) {
   const n = parseInt(h.slice(1), 16)
@@ -2518,13 +2822,14 @@ function innerLightHD() {
     back += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#e9dcff" opacity="${(0.15 + rnd() * 0.3 * (1 - y / 14)).toFixed(2)}"/>`
   }
   ;[[24, 3], [41, 6], [70, 2], [84, 7], [33, 10]].forEach(([x, y], i) => {
+    const tw = (dur / [5, 4, 4, 3, 3][i]).toFixed(4)
     const g = new Pix().set(x - 1, y, '#bba6ee').set(x + 1, y, '#bba6ee').set(x, y - 1, '#bba6ee').set(x, y + 1, '#bba6ee')
-    back += `<g>${g.svg()}<animate attributeName="opacity" values="0.15;0.6;0.15" dur="${3.6 + i * 0.7}s" begin="${i * 0.7}s" repeatCount="indefinite"/></g>`
-    back += `<g>${new Pix().set(x, y, '#fff8ee').svg()}<animate attributeName="opacity" values="0.6;1;0.6" dur="${3.6 + i * 0.7}s" begin="${i * 0.7}s" repeatCount="indefinite"/></g>`
+    back += `<g>${g.svg()}<animate attributeName="opacity" values="0.15;0.6;0.15" dur="${tw}s" begin="${-i * 0.7}s" repeatCount="indefinite"/></g>`
+    back += `<g>${new Pix().set(x, y, '#fff8ee').svg()}<animate attributeName="opacity" values="0.6;1;0.6" dur="${tw}s" begin="${-i * 0.7}s" repeatCount="indefinite"/></g>`
   })
 
   // the sun, low and large, sinking a little over the whole scene
-  let sunG = `<circle cx="${(SUNX + 0.5) * Q}" cy="${(SUNY + 0.5) * Q}" r="62" fill="url(#inlHalo)"><animate attributeName="r" values="61;64;61" dur="11s" repeatCount="indefinite"/></circle>`
+  let sunG = `<circle cx="${(SUNX + 0.5) * Q}" cy="${(SUNY + 0.5) * Q}" r="62" fill="url(#inlHalo)"><animate attributeName="r" values="61;64;61" dur="${(dur / 2).toFixed(4)}s" repeatCount="indefinite"/></circle>`
   const sun = new Pix()
   const R = 10
   for (let y = -R; y <= R; y++) {
@@ -2541,9 +2846,9 @@ function innerLightHD() {
     for (let x = -R; x <= R; x++) if (x * x + yy * yy <= R * R) sun.set(SUNX + x, SUNY + yy, inlMix('#ffb460', '#d86a4a', a))
   }
   sunG += sun.svg()
-  back += `<g>${sunG}<animateTransform attributeName="transform" type="translate" values="0 0;0 ${4 * Q}" dur="${dur}s" repeatCount="indefinite"/></g>`
+  back += `<g>${sunG}${inlGlide([[0, 0, 0], [13.2, 0, 3, INL_EASE], [dur, 0, 0, INL_EASE]], dur)}</g>`
   // the evening deepening, very slowly
-  back += `<rect width="${W}" height="${34 * Q}" fill="#1d1636" opacity="0"><animate attributeName="opacity" values="0;0.14" dur="${dur}s" repeatCount="indefinite"/></rect>`
+  back += `<rect width="${W}" height="${34 * Q}" fill="#1d1636" opacity="0"><animate attributeName="opacity" values="0;0.14;0" keyTimes="0;${(13.2 / dur).toFixed(4)};1" calcMode="spline" keySplines="${INL_EASE};${INL_EASE}" dur="${dur}s" repeatCount="indefinite"/></rect>`
 
   // thin lit clouds
   const clouds = new Pix()
@@ -2555,7 +2860,7 @@ function innerLightHD() {
   cloud(60, 12, 22, '#8a4466', '#d2745a')
   cloud(50, 22, 22, '#c8605a', '#ffb468')
   cloud(14, 9, 14, '#5a3062', '#8a4466')
-  back += `<g>${clouds.svg()}<animateTransform attributeName="transform" type="translate" values="0 0;${2 * Q} 0" dur="${dur}s" repeatCount="indefinite"/></g>`
+  back += `<g>${clouds.svg()}${inlGlide([[0, 0, 0], [dur / 2, 1.5, 0, INL_EASE], [dur, 0, 0, INL_EASE]], dur)}</g>`
 
   // far hills, a line of distant houses, near ridge
   const hills = new Pix()
@@ -2576,7 +2881,7 @@ function innerLightHD() {
     far.set(x + w - 1, base - h, '#9a4a5e')
   }
   const farLights = new Pix().set(70, fh[70] - 1, '#ffcf6a')
-  back += hills.svg() + far.svg() + `<g>${farLights.svg()}<animate attributeName="opacity" values="1;0.8;1" dur="5.5s" repeatCount="indefinite"/></g>`
+  back += hills.svg() + far.svg() + `<g>${farLights.svg()}<animate attributeName="opacity" values="1;0.8;1" dur="${(dur / 3).toFixed(4)}s" repeatCount="indefinite"/></g>`
   const ridge = new Pix()
   for (let c = 0; c < GW; c++) {
     const h = 34 + Math.round(1.1 * Math.sin(c / 5 + 2) + 0.6 * Math.sin(c / 2.3))
@@ -2662,8 +2967,8 @@ function innerLightHD() {
   house.rect(79, 24, 1, 3, '#2e1a2c')
 
   back += house.svg()
-  back += `<g>${glow.svg()}<animate attributeName="opacity" values="1;0.9;1" dur="6s" repeatCount="indefinite"/></g>`
-  back += `<g>${glow2.svg()}<animate attributeName="opacity" values="0.92;1;0.92" dur="7.5s" repeatCount="indefinite"/></g>`
+  back += `<g>${glow.svg()}<animate attributeName="opacity" values="1;0.9;1" dur="${(dur / 3).toFixed(4)}s" repeatCount="indefinite"/></g>`
+  back += `<g>${glow2.svg()}<animate attributeName="opacity" values="0.92;1;0.92" dur="${(dur / 2).toFixed(4)}s" repeatCount="indefinite"/></g>`
   back += `<ellipse cx="${13.5 * Q}" cy="${38 * Q}" rx="16" ry="5" fill="url(#inlWarm)"/>`
 
   // the dry tree, bare branches against the glow
@@ -2686,8 +2991,8 @@ function innerLightHD() {
   for (let i = 0; i < 6; i++) {
     const x = 26 + i * 11
     const y = 14 + (i % 3) * 6
-    const d = 7 + i
-    back += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#ffd89a" opacity="0"><animateMotion path="M0 0 q 10 -4 18 2 t 16 -4" dur="${d}s" begin="${i * 1.3}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.55;0" dur="${d}s" begin="${i * 1.3}s" repeatCount="indefinite"/></rect>`
+    const d = (dur / 2).toFixed(4)
+    back += `<rect x="${x * Q}" y="${y * Q}" width="${Q}" height="${Q}" fill="#ffd89a" opacity="0"><animateMotion path="M0 0 q 10 -4 18 2 t 16 -4" dur="${d}s" begin="${-i * 1.43}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.55;0" dur="${d}s" begin="${-i * 1.43}s" repeatCount="indefinite"/></rect>`
   }
 
   // the probe: a point of light climbing out of the hills while he looks up
@@ -2699,34 +3004,20 @@ function innerLightHD() {
     const Y0 = 30
     const fx = 50
     const fy = 5
-    // whole-pixel path: one step for every art px it moves
-    const at = (t: number): [number, number] => {
-      const f = Math.min(1, Math.max(0, (t - t0) / (t1 - t0)))
-      const e = 1 - (1 - f) * (1 - f)
-      return [Math.round((fx - X0) * e), Math.round((fy - Y0) * e)]
-    }
-    const path = (lag: number) => {
-      const out: [number, number, number][] = []
-      let last = ''
-      for (let t = t0 + lag; t <= t1 + lag + 0.001; t += 0.05) {
-        const [x, y] = at(t - lag)
-        if (`${x},${y}` === last) continue
-        last = `${x},${y}`
-        out.push([+t.toFixed(3), x, y])
-      }
-      return out
-    }
+    // a straight climb that eases out as it nears its place (quadratic ease-out)
+    const path = (lag: number) =>
+      inlGlide([[t0 + lag, 0, 0], [t1 + lag, fx - X0, fy - Y0, '0.33 0.67 0.67 1']], dur)
     const head = new Pix().set(X0, Y0, '#ffffff')
     const halo = new Pix().set(X0 - 1, Y0, '#cfe6ff').set(X0 + 1, Y0, '#cfe6ff').set(X0, Y0 - 1, '#cfe6ff').set(X0, Y0 + 1, '#cfe6ff')
     const trail = (lag: number, c: string, o: number) =>
-      `<g opacity="0">${inlFade([[t0 + lag, 0], [t0 + lag + 0.6, o], [t1 - 0.3, o], [t1 + 0.6, 0]], dur)}<g>${new Pix().set(X0, Y0, c).svg()}${inlPath(path(lag), dur)}</g></g>`
+      `<g opacity="0">${inlFade([[t0 + lag, 0], [t0 + lag + 0.6, o], [t1 - 0.3, o], [t1 + 0.6, 0]], dur)}<g>${new Pix().set(X0, Y0, c).svg()}${path(lag)}</g></g>`
     back += trail(0.5, '#ffd2a0', 0.3) + trail(0.25, '#ffe8c8', 0.55)
     // the rising light fades in over the hills
-    back += `<g opacity="0">${inlFade([[t0, 0], [t0 + 0.8, 1], [t1 + 0.4, 1], [t1 + 1.2, 0]], dur)}<g>${halo.svg()}${head.svg()}${inlPath(path(0), dur)}</g></g>`
+    back += `<g opacity="0">${inlFade([[t0, 0], [t0 + 0.8, 1], [t1 + 0.4, 1], [t1 + 1.2, 0]], dur)}<g>${halo.svg()}${head.svg()}${path(0)}</g></g>`
     // where it settles: a small soft glow that rises and ebbs, then a star that stays
-    back += `<circle cx="${(fx + 0.5) * Q}" cy="${(fy + 0.5) * Q}" r="5" fill="#dfeaff" opacity="0">${inlFade([[t1 - 0.3, 0], [t1 + 0.5, 0.22], [t1 + 1.8, 0.07], [dur, 0.06]], dur)}</circle>`
+    back += `<circle cx="${(fx + 0.5) * Q}" cy="${(fy + 0.5) * Q}" r="5" fill="#dfeaff" opacity="0">${inlFade([[t1 - 0.3, 0], [t1 + 0.5, 0.22], [t1 + 1.8, 0.07], [dur - 1.6, 0.06], [dur, 0]], dur)}</circle>`
     const star = new Pix().set(fx, fy, '#ffffff').set(fx - 1, fy, '#cfe6ff').set(fx + 1, fy, '#cfe6ff').set(fx, fy - 1, '#cfe6ff').set(fx, fy + 1, '#cfe6ff')
-    back += `<g opacity="0">${inlFade([[t1 - 0.2, 0], [t1 + 0.6, 1]], dur)}<g>${star.svg()}<animate attributeName="opacity" values="1;0.75;1" dur="3.4s" repeatCount="indefinite"/></g></g>`
+    back += `<g opacity="0">${inlFade([[t1 - 0.2, 0], [t1 + 0.6, 1], [dur - 1.6, 1], [dur, 0]], dur)}<g>${star.svg()}<animate attributeName="opacity" values="1;0.75;1" dur="${(dur / 5).toFixed(4)}s" repeatCount="indefinite"/></g></g>`
   }
 
   s += `<g mask="url(#inlFade)">${back}</g>`
@@ -2811,53 +3102,72 @@ function innerLightHD() {
   half.set(KX + 13, KY + 6, fl.hole).set(KX + 16, KY + 7, fl.hole).set(KX + 19, KY + 7, fl.band).set(KX + 19, KY + 8, fl.band)
   half.rect(KX + 23, KY + 11, 1, 2, fl.tassel)
   const eyesShut = new Pix().rect(KX + 6, KY + 4, 2, 1, EYE_HD).rect(KX + 12, KY + 4, 2, 1, EYE_HD)
+  const eyesHalf = new Pix().rect(KX + 6, KY + 3, 2, 2, EYE_HD).rect(KX + 12, KY + 3, 2, 2, EYE_HD)
 
+  // in-betweens: the flute swings from his mouth (f = 0) down to hanging (f = 1),
+  // through the half-way drawing at f = 0.5
+  const tilt = (f: number) => {
+    const p = new Pix()
+    p.rect(KX + 18, KY + 5, 3, 2, k.skin).set(KX + 20, KY + 5, k.light).rect(KX + 18, KY + 7, 3, 1, k.shade)
+    const g = f < 0.5 ? f / 0.5 : (f - 0.5) / 0.5
+    const L = (u: number, v: number) => Math.round(u + (v - u) * g)
+    const [ax, ay, bx, by] = (f < 0.5 ? [L(9, 10), 5, L(26, 25), L(5, 10)] : [L(10, 21), 5, L(25, 21), L(10, 14)]).map((v, i) => (i % 2 ? v : KX + v))
+    const steep = Math.abs(by - ay) > Math.abs(bx - ax)
+    if (!steep) inlLine(p, ax, KY + ay + 1, bx, KY + by + 1, fl.mid)
+    inlLine(p, ax, KY + ay, bx, KY + by, steep ? fl.mid : fl.hi)
+    p.set(ax, KY + ay, fl.dark).set(bx, KY + by, fl.dark)
+    const m = (u: number, v: number, w: number) => Math.round(u + (v - u) * w)
+    p.set(m(ax, bx, 0.55), KY + m(ay, by, 0.55), fl.band)
+    p.rect(m(ax, bx, 0.85) + (steep ? 1 : 0), KY + m(ay, by, 0.85) + (steep ? 0 : 1), 1, 2, fl.tassel)
+    return p.svg()
+  }
   kamin += shown(play.svg(), INL_PLAY, dur)
-  kamin += shown(half.svg(), INL_MOVE, dur)
-  kamin += shown(eyesShut.svg(), INL_MOVE, dur)
+  kamin += shown(tilt(1 / 6), INL_TILT(1), dur)
+  kamin += shown(tilt(2 / 6), INL_TILT(2), dur)
+  kamin += shown(half.svg(), INL_TILT(3), dur)
+  kamin += shown(tilt(4 / 6), INL_TILT(4), dur)
+  kamin += shown(tilt(5 / 6), INL_TILT(5), dur)
+  kamin += shown(eyesShut.svg(), [[6.05, 6.55], [13.35, 13.75]], dur)
+  kamin += shown(eyesHalf.svg(), [[6.55, 6.7], [13.2, 13.35]], dur)
   kamin += shown(rest.svg(), INL_REST, dur)
   // eyes open ahead, then turn up to the light as it climbs
-  kamin += shown(eyesFwd.svg(), [[6.6, 8.2], [12.9, 13.2]], dur)
+  kamin += shown(eyesFwd.svg(), [[6.7, 8.2], [12.9, 13.2]], dur)
   kamin += shown(eyesUp.svg(), [[8.2, 12.9]], dur)
   kamin += shown(glint.svg(), [[10.9, 11.6], [11.75, 12.9]], dur)
   kamin += shown(lids.svg(), [[11.6, 11.75]], dur)
 
-  // sway: lean one pixel with the phrase while he plays, still while he watches
-  const sway: [number, number, number][] = [[0, 0, 0]]
-  let lean = 0
-  for (let t = 1.2; t < 5.9; t += 1.2) sway.push([t, (lean ^= 1), 0])
-  sway.push([5.9, 0, 0])
-  lean = 0
-  for (let t = 14.6; t < dur - 0.6; t += 1.4) sway.push([t, (lean ^= 1), 0])
-  s += `<g>${kamin}${inlPath(sway, dur)}</g>`
+  // sway: a slow, eased one-pixel lean with the phrase while he plays, still while he watches
+  const sway: [number, number, number, string?][] = [[0, 0, 0]]
+  for (const [t, x] of [[1.2, 1], [2.4, 0], [3.6, 1], [4.8, 0], [5.9, 0], [13.9, 0], [15.3, 1], [dur, 0]] as [number, number][]) sway.push([t, x, 0, INL_EASE])
+  s += `<g>${kamin}${inlGlide(sway, dur)}</g>`
 
   // notes drifting slowly up from the flute and fading
   const noteA = ['.#.', '.##', '.#.', '##.', '##.']
   const noteB = ['.####', '.#..#', '.#..#', '##.##', '##.##']
   const noteC = ['..#', '..#', '..#', '###', '##.']
   // first melody (one already afloat when the scene opens), then a soft reprise
-  const notes: [number, number][] = [[-1.4, 1], [0.1, 1], [1.2, 1], [2.3, 1], [3.4, 1], [4.6, 1], [14.1, 0.75], [15.4, 0.7]]
+  const notes: [number, number][] = [[0.1, 1], [1.2, 1], [2.3, 1], [3.4, 1], [4.6, 1], [14.1, 0.75], [15.4, 0.7]]
+  const runs: [number, number, number][] = []
   notes.forEach(([t0, peak], i) => {
+    runs.push([t0, peak, i + 1]) // numbered as before, so each note keeps its shape and colour
+    if (t0 + 4.6 > dur) runs.push([t0 - dur, peak, i + 1])
+  })
+  runs.forEach(([t0, peak, i]) => {
     const len = 4.6
     const shape = [noteA, noteC, noteB][i % 3]
     const ox = KX + 23 + (i % 2)
     const oy = KY + 1
     const c = i % 2 ? '#ffe6b0' : '#fff4d6'
     const n = new Pix().rows(shape, ox, oy - shape.length, { '#': c }).svg()
-    const steps: [number, number, number][] = []
-    const N = 22
+    const steps: [number, number, number, string?][] = []
+    const N = 8
     const drift = i % 2 ? 1 : -1
-    let last = ''
     for (let j = 0; j <= N; j++) {
       const f = j / N
-      const dx = Math.round(drift * 2 * Math.sin(f * 4 + i) - f * (3 + (i % 3) * 2))
-      const dy = -Math.round(f * 20)
-      if (`${dx},${dy}` === last) continue
-      last = `${dx},${dy}`
-      steps.push([+(t0 + f * len).toFixed(3), dx, dy])
+      steps.push([+(t0 + f * len).toFixed(3), +(drift * 2 * Math.sin(f * 4 + i) - f * (3 + (i % 3) * 2)).toFixed(2), +(-f * 20).toFixed(2)])
     }
     const op = inlFade([[t0, 0], [t0 + 0.6, peak], [t0 + len * 0.5, peak], [t0 + len, 0]], dur)
-    s += `<g opacity="0">${op}<g>${n}${inlPath(steps, dur)}</g></g>`
+    s += `<g opacity="0">${op}<g>${n}${inlGlide(steps, dur)}</g></g>`
   })
 
   // ---------- Eline ----------
@@ -2899,11 +3209,11 @@ function innerLightHD() {
   upper += shown(eLeft.svg(), [[7.0, 8.6], [13.4, 14.05]], dur)
   upper += shown(eUp.svg(), [[8.6, 12.0], [12.15, 13.4]], dur)
   // she leans toward him as they watch the new star, and stays there
-  eline += `<g>${upper}${inlPath([[0, 0, 0], [11.2, -1, 0], [11.9, -2, 0]], dur)}</g>`
+  eline += `<g>${upper}${inlGlide([[0, 0, 0], [10.9, 0, 0], [12.1, -2, 0, INL_EASE], [dur - 1.5, -2, 0], [dur, 0, 0, INL_EASE]], dur)}</g>`
   s += eline
 
   // warm rim of evening light on the two of them
-  s += `<ellipse cx="${(SUNX - 2) * Q}" cy="${34 * Q}" rx="70" ry="16" fill="url(#inlWarm)"><animate attributeName="opacity" values="0.88;1;0.88" dur="10s" repeatCount="indefinite"/></ellipse>`
+  s += `<ellipse cx="${(SUNX - 2) * Q}" cy="${34 * Q}" rx="70" ry="16" fill="url(#inlWarm)"><animate attributeName="opacity" values="0.88;1;0.88" dur="${(dur / 2).toFixed(4)}s" repeatCount="indefinite"/></ellipse>`
   // keep the title corner quiet
   s += `<rect x="0" y="${40 * Q}" width="${36 * Q}" height="${8 * Q}" fill="url(#inlShadeG)"/>`
   return s
@@ -2987,10 +3297,15 @@ function fpMinus(a: [number, number][], b: [number, number][]): [number, number]
 
 const fpKT = (ts: number[]) => ts.map(t => +(t / SCENE_SECONDS).toFixed(4)).join(';')
 
-// discrete positions on the story timeline: [time, dx, dy] in art pixels, held until the next key
-function fpMove(keys: [number, number, number][]) {
-  const ks = keys[0][0] === 0 ? keys : [[0, 0, 0] as [number, number, number], ...keys]
-  return `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${SCENE_SECONDS}s" repeatCount="indefinite" values="${ks.map(([, x, y]) => `${x * Q} ${y * Q}`).join(';')}" keyTimes="${fpKT(ks.map(k => k[0]))}"/>`
+// eased positions on the story timeline: [time, dx, dy] in art pixels; between two keys
+// the move eases in and out, equal keys hold
+const FP_EASE = '0.4 0 0.2 1'
+function fpTween(keys: [number, number, number][]) {
+  const T = SCENE_SECONDS
+  const ks = [...keys]
+  if (ks[0][0] > 0) ks.unshift([0, ks[0][1], ks[0][2]])
+  if (ks[ks.length - 1][0] < T) ks.push([T, ks[ks.length - 1][1], ks[ks.length - 1][2]])
+  return `<animateTransform attributeName="transform" type="translate" calcMode="spline" dur="${T}s" repeatCount="indefinite" values="${ks.map(([, x, y]) => `${x * Q} ${y * Q}`).join(';')}" keyTimes="${ks.map(k => +(k[0] / T).toFixed(5)).join(';')}" keySplines="${ks.slice(1).map(() => FP_EASE).join(';')}"/>`
 }
 
 // smooth opacity over the story: [time, opacity] keys, linear between them
@@ -3048,13 +3363,14 @@ function fpPalm(x: number, y: number) {
 }
 
 // a claw half raised, bent at the elbow, on the right side of the body
-function fpArmHalf(k: CrabHD, x: number, y: number) {
+function fpArmHalf(k: CrabHD, x: number, y: number, h = 5) {
   const p = new Pix()
+  const top = y + 6 - h
   p.rect(x + 18, y + 4, 2, 2, k.skin)
-  p.rect(x + 19, y + 1, 2, 5, k.skin).rect(x + 20, y + 1, 1, 5, k.shade)
-  p.rect(x + 18, y - 2, 1, 2, k.skin).rect(x + 21, y - 2, 1, 2, k.skin)
-  p.rect(x + 18, y, 4, 1, k.skin)
-  p.set(x + 18, y - 2, k.light).set(x + 21, y - 2, k.light)
+  p.rect(x + 19, top, 2, h, k.skin).rect(x + 20, top, 1, h, k.shade)
+  p.rect(x + 18, top - 3, 1, 2, k.skin).rect(x + 21, top - 3, 1, 2, k.skin)
+  p.rect(x + 18, top - 1, 4, 1, k.skin)
+  p.set(x + 18, top - 3, k.light).set(x + 21, top - 3, k.light)
   return p.svg()
 }
 
@@ -3103,14 +3419,16 @@ function facepalm() {
   // two layers of stars drifting past, clipped to the screen
   let seed = 7
   const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
-  const layer = (n: number, c: string, period: number, op: number) => {
+  // each layer is a tile of width L repeated across the screen; it scrolls one tile per
+  // period, and the period divides the story length, so the loop restart is seamless
+  const layer = (n: number, c: string, L: number, period: number, op: number) => {
     const p = new Pix()
     const pts: [number, number][] = []
-    for (let i = 0; i < n; i++) pts.push([Math.floor(rnd() * 49), Math.floor(rnd() * 15)])
-    for (const [x, y] of pts) p.set(31 + x, 4 + y, c).set(31 + x + 49, 4 + y, c)
-    return `<g opacity="${op}">${p.svg()}<animateTransform attributeName="transform" type="translate" values="0 0;${-49 * Q} 0" dur="${period}s" repeatCount="indefinite"/></g>`
+    for (let i = 0; i < n; i++) pts.push([Math.floor(rnd() * L), Math.floor(rnd() * 15)])
+    for (let k = 0; k * L < 49 + L; k++) for (const [x, y] of pts) p.set(31 + x + k * L, 4 + y, c)
+    return `<g opacity="${op}">${p.svg()}<animateTransform attributeName="transform" type="translate" values="0 0;${-L * Q} 0" dur="${+period.toFixed(4)}s" repeatCount="indefinite"/></g>`
   }
-  back += `<g clip-path="url(#fpScr)">${layer(22, '#8d8fc0', 40, 0.7)}${layer(9, '#e8ecff', 22, 1)}`
+  back += `<g clip-path="url(#fpScr)">${layer(11, '#8d8fc0', 25, SCENE_SECONDS, 0.7)}${layer(4, '#e8ecff', 19, SCENE_SECONDS / 2, 1)}`
   // a small planet arc in the lower corner of the screen
   const pl = new Pix()
   for (let x = -12; x <= 12; x++) for (let y = -12; y <= 12; y++) {
@@ -3137,7 +3455,7 @@ function facepalm() {
   ]
   bits.forEach(([x, y, w, c], i) => {
     const r = new Pix().rect(x, y, w, 1, c).svg()
-    back += i % 3 === 0 ? `<g>${r}<animate attributeName="opacity" values="1;0.4;1" dur="${2.2 + (i % 4) * 0.7}s" repeatCount="indefinite"/></g>` : r
+    back += i % 3 === 0 ? `<g>${r}<animate attributeName="opacity" values="1;0.4;1" dur="${+(SCENE_SECONDS / [8, 6, 5, 4][i % 4]).toFixed(4)}s" repeatCount="indefinite"/></g>` : r
   })
 
   // carpet with a lit strip at the console foot and a few seams
@@ -3236,19 +3554,27 @@ function facepalm() {
     p.rect(cx - 1, cy + 2, 3, 3, c1).set(cx, cy + 5, c1).set(cx - 1, cy + 2, c2).set(cx + 1, cy + 4, c2).set(cx, cy + 3, '#fff2c0')
     return p.svg()
   }
+  // arms go rest -> half-raised -> up (and back) in ~0.09 s steps; the maracas
+  // follow the claw through the same three positions
+  const qRightUp = merge([snapArm1, snapArm2, ...rightShake])
+  const armL = armPhases(leftUp)
+  const armR = armPhases(qRightUp)
   kit += shown(lowMaraca(qx - 3, qy + 6, '#e2452e', '#f2d04a'), complement(merge(leftUp), T), T)
-  kit += shown(lowMaraca(qx + 20, qy + 6, '#3fa35a', '#f2d04a'), complement(merge([...rightShake, snapArm2]), T), T)
+  kit += shown(lowMaraca(qx + 20, qy + 6, '#3fa35a', '#f2d04a'), complement(qRightUp, T), T)
+  kit += shown(maraca(qx - 8, qy - 8, '#e2452e', '#f2d04a'), armL.mid, T)
+  kit += shown(maraca(qx - 4, qy - 13, '#e2452e', '#f2d04a'), armL.up, T)
+  kit += shown(maraca(qx + 22, qy - 8, '#3fa35a', '#f2d04a'), armR.mid, T)
+  kit += shown(maraca(qx + 19, qy - 13, '#3fa35a', '#f2d04a'), armR.up, T)
   q += `<g opacity="0">${kit}${fpFade([[costumeIn, 0], [costumeIn + 0.5, 1], [costumeOut, 1], [costumeOut + 0.6, 0]])}</g>`
   q += fpLegs(FP_Q, qx, qy)
 
   // arms: one up for each snap, then left and right in turn on the beat
-  const qRightUp = merge([snapArm1, snapArm2, ...rightShake])
   q += shown(armRestHD(FP_Q, qx, qy, 'left'), complement(merge(leftUp), T), T)
   q += shown(armRestHD(FP_Q, qx, qy, 'right'), complement(qRightUp, T), T)
-  q += shown(armUpHD(FP_Q, qx, qy, 'left'), leftUp, T)
-  q += shown(armUpHD(FP_Q, qx, qy, 'right'), qRightUp, T)
-  q += shown(maraca(qx - 4, qy - 13, '#e2452e', '#f2d04a'), leftUp, T)
-  q += shown(maraca(qx + 19, qy - 13, '#3fa35a', '#f2d04a'), rightShake, T)
+  q += shown(armMidHD(FP_Q, qx, qy, 'left'), armL.mid, T)
+  q += shown(armMidHD(FP_Q, qx, qy, 'right'), armR.mid, T)
+  q += shown(armUpHD(FP_Q, qx, qy, 'left'), armL.up, T)
+  q += shown(armUpHD(FP_Q, qx, qy, 'right'), armR.up, T)
   // shake lines beside the raised maraca
   const shake = new Pix().set(qx - 6, qy - 13, '#fff2c0').set(qx - 6, qy - 11, '#fff2c0').set(qx, qy - 13, '#fff2c0')
   q += shown(shake.svg(), leftUp.map(([a, b]) => [a + 0.1, b - 0.1] as [number, number]), T)
@@ -3312,8 +3638,9 @@ function facepalm() {
     .rect(px0 + 4, py0 + 3, 2, 1, PICARD_HD.shade).rect(px0 + 10, py0 + 3, 2, 1, PICARD_HD.shade)
     .rect(px0 + 3, py0 + 1, 2, 1, brow).rect(px0 + 5, py0 + 2, 2, 1, brow)
     .rect(px0 + 11, py0 + 1, 2, 1, brow).rect(px0 + 9, py0 + 2, 2, 1, brow).svg()
-  pc += shown(half, [[4.5, 5.5], [11.6, 13.0]], T)
-  pc += shown(narrow, [[5.5, 7.7], [14.2, T]], T)
+  // (the glare softens back to his opening look in the last second, for a seamless restart)
+  pc += shown(half, [[4.5, 5.5], [11.6, 13.0], [16.2, 16.55]], T)
+  pc += shown(narrow, [[5.5, 7.7], [14.2, 16.2]], T)
   // eyes shut for the sigh, and a blink
   const shut = new Pix().rect(px0 + 4, py0 + 2, 2, 3, PICARD_HD.skin).rect(px0 + 10, py0 + 2, 2, 3, PICARD_HD.skin)
     .rect(px0 + 4, py0 + 4, 2, 1, PICARD_HD.shade).rect(px0 + 10, py0 + 4, 2, 1, PICARD_HD.shade).svg()
@@ -3321,18 +3648,26 @@ function facepalm() {
   // the facepalm: the far eye squeezed shut, the claw over the near one
   const squeeze = new Pix().rect(px0 + 4, py0 + 2, 2, 3, PICARD_HD.skin).rect(px0 + 3, py0 + 3, 4, 1, PICARD_HD.shade).set(px0 + 3, py0 + 2, PICARD_HD.shade).svg()
   pc += shown(squeeze, [hold], T)
-  // the claw comes up in steps, presses in, rubs the brow twice, and goes back down
+  // the claw lifts in one-pixel steps, cross-fades into the palm over 0.15 s, glides in
+  // to the face, rubs the brow twice, glides back out and lowers the same way
   const palmKeys: [number, number, number][] = [
-    [0, 6, 1], [6.9, 4, 1], [7.3, 2, 0], [7.7, 0, 0],
-    [8.9, -1, 0], [9.5, 0, 0], [10.1, -1, 0], [10.7, 0, 0],
-    [11.6, 2, 0], [11.9, 4, 1], [12.2, 6, 1],
+    [0, 6, 1], [6.5, 6, 1], [7.7, 0, 0],
+    [8.7, 0, 0], [8.95, -1, 0], [9.35, -1, 0], [9.6, 0, 0],
+    [9.95, 0, 0], [10.2, -1, 0], [10.55, -1, 0], [10.8, 0, 0],
+    [11.5, 0, 0], [12.4, 6, 1],
   ]
-  pc += shown(`<g>${fpPalm(px0, py0)}${fpMove(palmKeys)}</g>`, [palmOn], T)
-  pc += shown(fpArmHalf(PICARD_HD, px0, py0), [raiseHalf, lowerHalf], T)
-  pc += shown(armRestHD(PICARD_HD, px0, py0, 'left'), [[0, T]], T)
-  pc += shown(armRestHD(PICARD_HD, px0, py0, 'right'), complement(merge([raiseHalf, palmOn, lowerHalf]), T), T)
-  // he sinks a pixel into the facepalm and again into the sigh
-  s += `<g>${pc}${fpMove([[0, 0, 0], [8.0, 0, 1], [11.6, 0, 0], [13.1, 0, 1], [14.1, 0, 0]])}</g>`
+  pc += `<g opacity="0">${fpPalm(px0, py0)}${fpTween(palmKeys)}${fpFade([[6.45, 0], [6.6, 1], [12.4, 1], [12.55, 0]])}</g>`
+  const lift: [number, [number, number][]][] = [
+    [2, [[5.9, 6.05], [12.8, 12.9]]],
+    [3, [[6.05, 6.2], [12.7, 12.8]]],
+    [4, [[6.2, 6.35], [12.6, 12.7]]],
+  ]
+  for (const [h, on] of lift) pc += shown(fpArmHalf(PICARD_HD, px0, py0, h), on, T)
+  pc += shown(`<g>${fpArmHalf(PICARD_HD, px0, py0)}${fpFade([[6.45, 1], [6.6, 0], [12.4, 0], [12.55, 1]])}</g>`, [[6.35, 6.6], [12.4, 12.6]], T)
+  pc += armRestHD(PICARD_HD, px0, py0, 'left')
+  pc += shown(armRestHD(PICARD_HD, px0, py0, 'right'), complement([[5.9, 12.9]], T), T)
+  // he sinks a pixel into the facepalm and again into the sigh, easing down and up
+  s += `<g>${pc}${fpTween([[7.8, 0, 0], [8.1, 0, 1], [11.45, 0, 1], [11.75, 0, 0], [12.95, 0, 0], [13.25, 0, 1], [13.95, 0, 1], [14.25, 0, 0]])}</g>`
   s += fpLegs(PICARD_HD, px0, py0)
   // the sigh: a soft puff drifting off toward Q and thinning out
   const puff = new Pix().rect(px0 - 4, py0 + 4, 4, 3, '#cfc6dc').rect(px0 - 3, py0 + 3, 2, 1, '#ece6f4').set(px0 - 5, py0 + 5, '#a99fbb').set(px0, py0 + 6, '#a99fbb').svg()
@@ -3349,7 +3684,8 @@ function facepalm() {
 // cube ahead. The bioship's veins light up one by one and its orb charges; a
 // steady beam reaches the cube; cracks creep across it; it splits and drifts
 // apart in soft orange and green blooms. The 8472 turns to Janeway, and she
-// raises a claw: her decision. Debris drifts on into a quiet ending.
+// raises a claw: her decision. The debris fades, she lowers her claw and the
+// Collective pulls the cube back together, so the scene ends where it began.
 
 const SC8_JANEWAY: CrabHD = {
   skin: '#d97757',
@@ -3365,10 +3701,14 @@ const SC8_JANEWAY: CrabHD = {
 const sc8K = (t: number) => +(t / SCENE_SECONDS).toFixed(4)
 
 // translate in grid units along the story, keyed in seconds (must start at 0, end at SCENE_SECONDS)
-function sc8Move(keys: [number, number, number][], discrete = false, easeOut = false) {
+// ease: 'inout' glides (slow-fast-slow), 'out' starts quick and settles; a key may carry its own spline
+const SC8_INOUT = '0.45 0 0.55 1'
+const SC8_OUT = '0.25 0.6 0.45 1'
+const sc8Loop = (n: number) => +(SCENE_SECONDS / n).toFixed(4) // ambient periods that divide the scene
+function sc8Move(keys: ([number, number, number] | [number, number, number, string])[], ease: 'inout' | 'out' = 'inout') {
   const t = keys.map(k => sc8K(k[0])).join(';')
   const v = keys.map(k => `${+(k[1] * Q).toFixed(2)} ${+(k[2] * Q).toFixed(2)}`).join(';')
-  const mode = discrete ? ' calcMode="discrete"' : easeOut ? ` calcMode="spline" keySplines="${keys.slice(1).map(() => '0.25 0.6 0.45 1').join(';')}"` : ''
+  const mode = ` calcMode="spline" keySplines="${keys.slice(1).map(k => k[3] || (ease === 'out' ? SC8_OUT : SC8_INOUT)).join(';')}"`
   return `<animateTransform attributeName="transform" type="translate"${mode} dur="${SCENE_SECONDS}s" repeatCount="indefinite" values="${v}" keyTimes="${t}"/>`
 }
 
@@ -3432,6 +3772,8 @@ function scorpion() {
   const tSplit = 9.6 // the cube gives way
   const tTurn = 12.2 // the 8472 turns to Janeway
   const tClaw = 13.8 // Janeway raises her claw
+  const tBack = 15.4 // the quiet ending: everything eases back to how the scene began...
+  const tHome = 16.9 // ...and is home before the replay starts again
 
   let s = `<defs>
     <linearGradient id="sc8Sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0d0a1c"/><stop offset="1" stop-color="#241a3a"/></linearGradient>
@@ -3443,7 +3785,7 @@ function scorpion() {
     <radialGradient id="sc8Charge"><stop offset="0" stop-color="#ffe9a0" stop-opacity="0.6"/><stop offset="1" stop-color="#ffb347" stop-opacity="0"/></radialGradient>
     <radialGradient id="sc8GlowO"><stop offset="0" stop-color="#ff9a3d" stop-opacity="0.45"/><stop offset="1" stop-color="#ff7a3a" stop-opacity="0"/></radialGradient>
     <radialGradient id="sc8GlowG"><stop offset="0" stop-color="#6ef07a" stop-opacity="0.4"/><stop offset="1" stop-color="#2a9a48" stop-opacity="0"/></radialGradient>
-    <clipPath id="sc8BeamClip"><rect x="${47 * Q}" y="0" width="0" height="${H}"><animate attributeName="width" dur="${dur}s" repeatCount="indefinite" values="0;0;${14 * Q};${14 * Q}" keyTimes="0;${sc8K(tFire)};${sc8K(tHit)};1"/></rect></clipPath>
+    <clipPath id="sc8BeamClip"><rect x="${47 * Q}" y="0" width="0" height="${H}"><animate attributeName="width" dur="${dur}s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 1 1;${SC8_OUT};0 0 1 1" values="0;0;${14 * Q};${14 * Q}" keyTimes="0;${sc8K(tFire)};${sc8K(tHit)};1"/></rect></clipPath>
   </defs>`
 
   // ---- background: space, nebulae, stars, distant cube ----
@@ -3462,7 +3804,7 @@ function scorpion() {
   ;[[12, 20], [48, 2], [86, 30], [58, 26], [30, 22]].forEach(([x, y], i) => {
     const glow = new Pix()
     glow.set(x - 1, y, '#bfa8ee').set(x + 1, y, '#bfa8ee').set(x, y - 1, '#bfa8ee').set(x, y + 1, '#bfa8ee')
-    back += `<g>${sc8Path(glow)}<animate attributeName="opacity" values="0.15;0.8;0.15" dur="${2.6 + i * 0.7}s" begin="${i * 0.5}s" repeatCount="indefinite"/></g>`
+    back += `<g>${sc8Path(glow)}<animate attributeName="opacity" values="0.15;0.8;0.15" dur="${sc8Loop(7 - i)}s" begin="-${i * 0.5}s" repeatCount="indefinite"/></g>`
     back += new Pix().set(x, y, '#ffffff').svg()
   })
   // a second, distant cube: the Collective is everywhere
@@ -3529,19 +3871,21 @@ function scorpion() {
   // each crack layer glows in over 0.8 s, then cools to embers after the split
   const crackT = [tHit + 0.3, tHit + 1.0, tHit + 1.7]
   const crackSvg = (n: number) =>
-    `<g opacity="0">${sc8Path(cracks[n])}${sc8Fade([[0, 0], [crackT[n], 0], [crackT[n] + 0.8, 1], [tSplit + 0.6, 1], [tSplit + 3.5, 0.35], [dur, 0.25]])}</g>`
+    `<g opacity="0">${sc8Path(cracks[n])}${sc8Fade([[0, 0], [crackT[n], 0], [crackT[n] + 0.8, 1], [tSplit + 0.6, 1], [tSplit + 3.5, 0.35], [tBack, 0.25], [tHome, 0], [dur, 0]])}</g>`
   const lightsDie = (p: Pix) =>
-    `<g>${`<g>${sc8Path(p)}<animate attributeName="opacity" values="0.2;0.9;0.2" dur="2.4s" repeatCount="indefinite"/></g>`}${sc8Fade([[0, 1], [tSplit, 1], [tSplit + 1.5, 0], [dur, 0]])}</g>`
-  // the halves drift apart, quickly at first, then slower and slower
-  const halfMove = (dx: number, dy: number) => sc8Move([[0, 0, 0], [tSplit, 0, 0], [dur, dx, dy]], false, true)
+    `<g>${`<g>${sc8Path(p)}<animate attributeName="opacity" values="0.2;0.9;0.2" dur="${sc8Loop(7)}s" repeatCount="indefinite"/></g>`}${sc8Fade([[0, 1], [tSplit, 1], [tSplit + 1.5, 0], [tBack, 0], [tHome, 1], [dur, 1]])}</g>`
+  // the halves drift apart, quickly at first, then slower and slower; at the end the
+  // Collective pulls them gently back together (the cube regenerates for the replay)
+  const halfMove = (dx: number, dy: number) =>
+    sc8Move([[0, 0, 0], [tSplit, 0, 0], [tBack, dx, dy, SC8_OUT], [tHome, 0, 0, SC8_INOUT], [dur, 0, 0]])
   let cube = ''
   cube += `<g>${sc8Path(leftHalf)}${lightsDie(pulseL)}${crackSvg(0)}${crackSvg(1)}${crackSvg(2)}${halfMove(-3, -1)}</g>`
   cube += `<g>${sc8Path(rightHalf)}${lightsDie(pulseR)}${halfMove(7, -2)}</g>`
-  // while the beam holds it, the cube trembles: one art pixel, slowly
-  const shake: [number, number, number][] = [[0, 0, 0]]
+  // while the beam holds it, the cube trembles: a smooth sway of half an art pixel
+  const shake: [number, number, number][] = [[0, 0, 0], [tHit, 0, 0]]
   for (let t = tHit + 0.4, n = 0; t < tSplit - 0.2; t += 0.4, n++) shake.push([t, n % 2 ? 0 : 0.5, n % 2 ? 0.5 : 0])
   shake.push([tSplit - 0.2, 0, 0], [dur, 0, 0])
-  s += `<g>${cube}${sc8Move(shake, true)}</g>`
+  s += `<g>${cube}${sc8Move(shake)}</g>`
 
   // ---- the bioship: a spiny organic bulb with three prongs curving forward ----
   const ship = new Pix()
@@ -3587,16 +3931,14 @@ function scorpion() {
   veinPts.forEach(([x, y]) => veinGroups[x < 25 ? 0 : x < 31 ? 1 : 2].set(x + 2, by + y, '#ffcf6a'))
   veinGroups.forEach((g, i) => {
     const a = tVeins + i * 1.1
-    s += `<g opacity="0">${sc8Path(g)}${sc8Fade([[0, 0], [a, 0], [a + 1.8, 1], [tSplit, 1], [tSplit + 2.5, 0.25], [dur, 0.2]])}</g>`
+    s += `<g opacity="0">${sc8Path(g)}${sc8Fade([[0, 0], [a, 0], [a + 1.8, 1], [tSplit, 1], [tSplit + 2.5, 0.25], [tBack, 0.2], [tHome, 0], [dur, 0]])}</g>`
   })
 
-  // the orb gathers at the focal point in three sizes, each held over a second
+  // the orb gathers at the focal point: it swells smoothly from a spark to full size
   const orbRings = ['#ffe9a0', '#ffc35a', '#e8892e']
   const orbFade = sc8Fade([[0, 0], [tOrb, 0], [tOrb + 0.6, 1], [tSplit, 1], [tSplit + 1.2, 0], [dur, 0]])
-  let orb = ''
-  orb += shown(sc8Burst(nx, ny, 0, orbRings, 11, '#fff2c0'), [[tOrb, tOrb + 1.4]], dur)
-  orb += shown(sc8Burst(nx, ny, 1, orbRings, 12, '#fff2c0'), [[tOrb + 1.4, tOrb + 2.6]], dur)
-  orb += shown(sc8Burst(nx, ny, 2, orbRings, 13, '#fff2c0'), [[tOrb + 2.6, dur]], dur)
+  const orbGrow = `<animateTransform attributeName="transform" type="scale" calcMode="spline" keySplines="0 0 1 1;${SC8_INOUT};0 0 1 1" dur="${dur}s" repeatCount="indefinite" values="0.2;0.2;1;1" keyTimes="0;${sc8K(tOrb)};${sc8K(tOrb + 2.6)};1"/>`
+  const orb = `<g transform="translate(${(nx + 0.5) * Q} ${(ny + 0.5) * Q})"><g>${orbGrow}<g transform="translate(${-Q / 2} ${-Q / 2})">${sc8Burst(0, 0, 2, orbRings, 13, '#fff2c0')}</g></g></g>`
   s += `<g opacity="0">${orb}${orbFade}</g>`
   s += `<circle cx="${(nx + 0.5) * Q}" cy="${(ny + 0.5) * Q}" r="12" fill="url(#sc8Charge)" opacity="0">${sc8Fade([[0, 0], [tOrb, 0], [tFire, 0.9], [tSplit, 0.9], [tSplit + 1.4, 0], [dur, 0]])}</circle>`
 
@@ -3654,7 +3996,7 @@ function scorpion() {
     const c = !hot ? (i % 2 ? '#59616b' : '#4a515a') : i % 2 ? '#ffb347' : '#5fe36a'
     const sz = i % 5 === 0 ? 2 : 1
     const end = hot ? 0.35 : 0.9
-    s += `<rect x="${(59 + Math.round((rnd() - 0.5) * 6)) * Q}" y="${(11 + Math.round((rnd() - 0.5) * 6)) * Q}" width="${sz * Q}" height="${sz * Q}" fill="${c}" opacity="0"><animateTransform attributeName="transform" type="translate" calcMode="spline" keySplines="0 0 1 1;0.2 0.6 0.4 1" dur="${dur}s" repeatCount="indefinite" values="0 0;0 0;${dx.toFixed(1)} ${dy.toFixed(1)}" keyTimes="0;${sc8K(t0)};1"/>${sc8Fade([[0, 0], [t0, 0], [t0 + 0.5, 1], [t0 + 3, end], [dur, end]])}</rect>`
+    s += `<rect x="${(59 + Math.round((rnd() - 0.5) * 6)) * Q}" y="${(11 + Math.round((rnd() - 0.5) * 6)) * Q}" width="${sz * Q}" height="${sz * Q}" fill="${c}" opacity="0"><animateTransform attributeName="transform" type="translate" calcMode="spline" keySplines="0 0 1 1;0.2 0.6 0.4 1" dur="${dur}s" repeatCount="indefinite" values="0 0;0 0;${dx.toFixed(1)} ${dy.toFixed(1)}" keyTimes="0;${sc8K(t0)};1"/>${sc8Fade([[0, 0], [t0, 0], [t0 + 0.5, 1], [Math.min(t0 + 3, tBack - 0.1), end], [tBack, end], [tHome - 0.3, 0], [dur, 0]])}</rect>`
   }
 
   // ---- Voyager's hull as the foreground deck ----
@@ -3664,7 +4006,7 @@ function scorpion() {
   for (let i = 0; i < 8; i++) hull.set(20 + Math.floor(rnd() * 70), 44 + Math.floor(rnd() * 4), rnd() < 0.5 ? '#251f33' : '#140f1e')
   s += `<g mask="url(#sc8Fade)">${sc8Path(hull)}</g>`
   ;[44, 62, 80].forEach((x, i) => {
-    s += `<g>${new Pix().set(x, 43, '#ffb347').svg()}<animate attributeName="opacity" values="1;0.35;1" dur="2.6s" begin="${i * 0.8}s" repeatCount="indefinite"/></g>`
+    s += `<g>${new Pix().set(x, 43, '#ffb347').svg()}<animate attributeName="opacity" values="1;0.35;1" dur="${sc8Loop(6)}s" begin="-${i * 0.8}s" repeatCount="indefinite"/></g>`
   })
 
   // ---- Species 8472: tall, tripod-legged, mottled cream-green ----
@@ -3721,47 +4063,59 @@ function scorpion() {
     pts.forEach(([i, j]) => p.set(ax + i, ay + j, '#ffe066'))
     return sc8Path(p)
   }
+  // one pair of eyes that glides: onto the cube, then down at Janeway, and home at the end
   const tWatch = tHit + 0.4
-  let eyes = ''
-  eyes += shown(eyePair([[6, 3], [9, 3]]), [[0, tWatch]], dur)
-  eyes += shown(eyePair([[5, 3], [8, 3]]), [[tWatch, tTurn]], dur)
-  eyes += shown(eyePair([[5, 4], [8, 4]]), [[tTurn, dur]], dur)
-  const eyeGlow = `<animate attributeName="opacity" values="0.75;1;0.75" dur="3.2s" repeatCount="indefinite"/>`
-  // the head turns in two steps: eyes drop first, then the head leans toward her
-  const headTurn = sc8Move([[0, 0, 0], [tTurn + 0.5, -1, 0], [dur, -1, 0]], true)
-  s += `<g>${sc8Path(body)}<g>${sc8Path(head)}<g>${eyes}${eyeGlow}</g>${headTurn}</g></g>`
+  const eyes = eyePair([[6, 3], [9, 3]])
+  const eyeMove = sc8Move([[0, 0, 0], [tWatch, 0, 0], [tWatch + 0.35, -1, 0], [tTurn, -1, 0], [tTurn + 0.35, -1, 1], [tBack + 0.4, -1, 1], [tBack + 1.0, 0, 0], [dur, 0, 0]])
+  const eyeGlow = `<animate attributeName="opacity" values="0.75;1;0.75" dur="${sc8Loop(5)}s" repeatCount="indefinite"/>`
+  // the head turns in two steps: eyes drop first, then the head leans toward her (and back at the end)
+  const headTurn = sc8Move([[0, 0, 0], [tTurn + 0.3, 0, 0], [tTurn + 0.8, -1, 0], [tBack + 0.3, -1, 0], [tBack + 0.9, 0, 0], [dur, 0, 0]])
+  s += `<g>${sc8Path(body)}<g>${sc8Path(head)}<g>${eyes}${eyeGlow}${eyeMove}</g>${headTurn}</g></g>`
 
   // ---- Janeway: auburn bun, black jacket, red shoulders, four pips ----
   const jx = 26
   const jy = 28
-  s += crabHD(
-    SC8_JANEWAY, jx, jy, 'right', dur,
-    { left: [], right: [[tClaw + 0.7, dur]] },
-    [],
-    4.7,
-    p => {
-      const hair = '#8a3a1e'
-      const hairL = '#b2522a'
-      const dark = '#5e2412'
-      p.rect(jx + 1, jy, 15, 1, hair).rect(jx + 4, jy, 9, 1, hairL)
-      p.rect(jx, jy + 1, 2, 3, hair).set(jx + 2, jy + 1, hair).set(jx, jy + 3, dark)
-      p.rect(jx + 2, jy - 1, 11, 1, hair).rect(jx + 5, jy - 1, 6, 1, hairL)
-      p.rows(['.bbb.', 'bLLbb', 'bLbbd', '.bbd.'], jx, jy - 4, { b: hair, L: hairL, d: dark })
-      p.rect(jx + 8, jy + 6, 2, 1, '#8a8a96')
-      for (const c of [12, 13, 14, 15]) p.set(jx + c, jy + 7, '#e8c547')
-      p.rect(jx + 4, jy + 6, 2, 2, '#e8c547').set(jx + 4, jy + 6, '#fff3b0')
-    },
-  )
-  // her claw comes up in two in-between frames before it is raised high
   const k = SC8_JANEWAY
+  const jw = clawdBody(k, jx, jy, 'right')
+  {
+    const p = jw.p
+    const hair = '#8a3a1e'
+    const hairL = '#b2522a'
+    const dark = '#5e2412'
+    p.rect(jx + 1, jy, 15, 1, hair).rect(jx + 4, jy, 9, 1, hairL)
+    p.rect(jx, jy + 1, 2, 3, hair).set(jx + 2, jy + 1, hair).set(jx, jy + 3, dark)
+    p.rect(jx + 2, jy - 1, 11, 1, hair).rect(jx + 5, jy - 1, 6, 1, hairL)
+    p.rows(['.bbb.', 'bLLbb', 'bLbbd', '.bbd.'], jx, jy - 4, { b: hair, L: hairL, d: dark })
+    p.rect(jx + 8, jy + 6, 2, 1, '#8a8a96')
+    for (const c of [12, 13, 14, 15]) p.set(jx + c, jy + 7, '#e8c547')
+    p.rect(jx + 4, jy + 6, 2, 2, '#e8c547').set(jx + 4, jy + 6, '#fff3b0')
+  }
+  s += sc8Path(jw.p) + armRestHD(k, jx, jy, 'left')
+  // blinks, on a period that divides the scene
+  const lids = new Pix()
+  jw.ex.forEach(e => lids.rect(jx + e, jy + 2, 2, 3, k.skin))
+  s += `<g opacity="0">${sc8Path(lids)}<animate attributeName="opacity" calcMode="discrete" dur="${sc8Loop(4)}s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.92;0.95"/></g>`
+  // her claw comes up through four in-between drawings, holds, and comes back down for the ending
   const arm1 = new Pix()
   arm1.rect(jx + 20, jy + 2, 2, 3, k.skin).rect(jx + 22, jy + 1, 2, 2, k.skin).set(jx + 21, jy + 4, k.shade).set(jx + 23, jy + 2, k.shade)
   arm1.set(jx + 24, jy - 1, k.light).set(jx + 24, jy + 0, k.skin).set(jx + 22, jy - 1, k.light).set(jx + 22, jy, k.skin)
   const arm2 = new Pix()
   arm2.rect(jx + 19, jy, 2, 4, k.skin).set(jx + 20, jy + 3, k.shade).rect(jx + 20, jy - 2, 2, 2, k.skin).set(jx + 21, jy - 1, k.shade)
   arm2.rect(jx + 19, jy - 4, 1, 2, k.skin).rect(jx + 22, jy - 4, 1, 2, k.skin).rect(jx + 19, jy - 3, 4, 1, k.skin).set(jx + 19, jy - 4, k.light).set(jx + 22, jy - 4, k.light)
-  s += shown(sc8Path(arm1), [[tClaw, tClaw + 0.35]], dur)
-  s += shown(sc8Path(arm2), [[tClaw + 0.35, tClaw + 0.7]], dur)
+  const arm3 = new Pix() // three quarters up
+  arm3.rect(jx + 18, jy + 4, 3, 2, k.skin).rect(jx + 19, jy - 2, 2, 6, k.skin).rect(jx + 20, jy - 2, 1, 6, k.shade)
+  arm3.rect(jx + 18, jy - 6, 1, 3, k.skin).rect(jx + 21, jy - 6, 1, 3, k.skin).rect(jx + 18, jy - 4, 4, 1, k.skin).rect(jx + 19, jy - 3, 2, 1, k.skin)
+  arm3.set(jx + 18, jy - 6, k.light).set(jx + 21, jy - 6, k.light)
+  const ST = 0.11
+  const up = tClaw + 4 * ST
+  const down = tBack // she lowers it as the ending settles
+  const step = (n: number): [number, number][] => [[tClaw + n * ST, tClaw + (n + 1) * ST], [down + (3 - n) * ST, down + (4 - n) * ST]]
+  s += shown(armRestHD(k, jx, jy, 'right'), [[0, tClaw + ST], [tClaw + 2 * ST, tClaw + 3 * ST], [down + ST, down + 2 * ST], [down + 3 * ST, dur]], dur)
+  s += shown(sc8Path(arm1), step(0), dur)
+  s += shown(armMidHD(k, jx, jy, 'right'), step(1), dur)
+  s += shown(sc8Path(arm2), step(2), dur)
+  s += shown(sc8Path(arm3), step(3), dur)
+  s += shown(armUpHD(k, jx, jy, 'right'), [[up, down]], dur)
   return s
 }
 
@@ -3770,7 +4124,9 @@ function scorpion() {
 // soft pillar of light; the light gently opens and Q is there in white robes,
 // arms spread in welcome. Picard startles back a step; Q hops with delight and
 // throws both claws up; Picard raises a claw in protest; Q spreads his arms
-// again, smug. A calm tableau while the rays drift.
+// again, smug. A calm tableau while the rays drift; then Q and his light recede and
+// Picard fades back to where he lay, so the loop starts where it began.
+// All motion is eased tweens; pose changes step through in-between drawings.
 
 const TAP_PICARD: CrabHD = { ...PICARD_HD, rim: '#ffe0c8' }
 
@@ -3811,13 +4167,6 @@ function tapLegs(k: CrabHD, x: number, y: number, frame: number) {
     const up = (frame === 1 && i % 2 === 0) || (frame === 2 && i % 2 === 1)
     p.rect(x + lx + (up ? 1 : 0), y + 10, 2, up ? 3 : 4, k.legs)
   })
-  return p.svg()
-}
-
-// legs folded under a crouching body: only h rows show
-function tapTucked(k: CrabHD, x: number, y: number, h: number) {
-  const p = new Pix()
-  ;[1, 5, 11, 15].forEach(lx => p.rect(x + lx, y + 10, 2, h, k.legs))
   return p.svg()
 }
 
@@ -3869,6 +4218,26 @@ function tapTrack(attr: string, pts: [number, number][]) {
   return `<animate attributeName="${attr}" dur="${T}s" repeatCount="indefinite" values="${all.map(p => p[1]).join(';')}" keyTimes="${all.map(p => +(p[0] / T).toFixed(4)).join(';')}"/>`
 }
 
+// an eased transform track on the story timeline: [time, value] keys
+function tapTf(type: string, pts: [number, string][], ease = '0.4 0 0.2 1') {
+  const T = SCENE_SECONDS
+  const all = [...pts]
+  if (all[0][0] > 0) all.unshift([0, all[0][1]])
+  if (all[all.length - 1][0] < T) all.push([T, all[all.length - 1][1]])
+  const sp = all.slice(1).map(([, v], i) => (v === all[i][1] ? '0 0 1 1' : ease))
+  return `<animateTransform attributeName="transform" type="${type}" calcMode="spline" dur="${T}s" repeatCount="indefinite" values="${all.map(p => p[1]).join(';')}" keyTimes="${all.map(p => +(p[0] / T).toFixed(5)).join(';')}" keySplines="${sp.join(';')}"/>`
+}
+
+// Picard's eyes turned part way (1) or all the way (2) to the left: skin over the
+// right-looking eyes, new eyes drawn over
+function tapEyes(k: CrabHD, x: number, y: number, shift: number) {
+  const p = new Pix()
+  ;[6, 12].forEach(e => p.rect(x + e, y + 2, 2, 3, k.skin))
+  if (shift === 2) p.rect(x + 16, y + 1, 1, 5, k.skin)
+  ;[6, 12].forEach(e => p.rect(x + e - shift, y + 2, 2, 3, EYE_HD))
+  return p.svg()
+}
+
 function tapestry() {
   const dur = SCENE_SECONDS
   const W = GW * Q
@@ -3876,6 +4245,8 @@ function tapestry() {
   const SX = 69 // where the light comes from
   const B0 = 7.9 // the light starts to open
   const B1 = 9.4 // ... and Q is fully there
+  const R0 = 15.85 // at the end the light closes again ...
+  const R1 = 16.9 // ... back to the opening pillar
   let s = `<defs>
     <linearGradient id="tapSky" x1="0" y1="0" x2="1" y2="0.4"><stop offset="0" stop-color="#b9add6"/><stop offset="0.45" stop-color="#e3dcf2"/><stop offset="1" stop-color="#f7f3ea"/></linearGradient>
     <linearGradient id="tapFloor" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e9e2f4"/><stop offset="1" stop-color="#cbc0e0"/></linearGradient>
@@ -3883,6 +4254,7 @@ function tapestry() {
     <mask id="tapFade"><rect width="${W}" height="${H}" fill="url(#tapFadeG)"/></mask>
     <radialGradient id="tapGlow"><stop offset="0" stop-color="#ffffff" stop-opacity="1"/><stop offset="0.35" stop-color="#fff6dc" stop-opacity="0.8"/><stop offset="1" stop-color="#ffe9b8" stop-opacity="0"/></radialGradient>
     <radialGradient id="tapHalo"><stop offset="0" stop-color="#ffe7a8" stop-opacity="0.9"/><stop offset="0.6" stop-color="#ffd98a" stop-opacity="0.35"/><stop offset="1" stop-color="#ffd98a" stop-opacity="0"/></radialGradient>
+    <clipPath id="tapFloorClip"><rect x="${-W}" width="${3 * W}" height="${42 * Q}"/></clipPath>
     <radialGradient id="tapCorner" cx="0" cy="1" r="1"><stop offset="0" stop-color="${C.bg}" stop-opacity="1"/><stop offset="0.55" stop-color="${C.bg}" stop-opacity="0.85"/><stop offset="1" stop-color="${C.bg}" stop-opacity="0"/></radialGradient>
   </defs>`
 
@@ -3905,7 +4277,7 @@ function tapestry() {
     [70, 21, 24, '#e6e0f3', '#f3effa', 0, -12],
   ] as [number, number, number, string, string, number, number][]
   banks.forEach(([cx, cy, w, c, top, a, b]) => {
-    back += `<g>${cloud(cx, cy, w, c, top)}<animateTransform attributeName="transform" type="translate" values="${a} 0;${b} 0" dur="${dur}s" repeatCount="indefinite"/></g>`
+    back += `<g>${cloud(cx, cy, w, c, top)}${tapTf('translate', [[0, `${a} 0`], [dur / 2, `${b} 0`], [dur, `${a} 0`]], '0.45 0 0.55 1')}</g>`
   })
 
   // light rays fanning out of the source: steady, swinging slowly once across the story
@@ -3922,7 +4294,7 @@ function tapestry() {
     rays += `<polygon points="${SX * Q},${2 * Q} ${x1.toFixed(1)},${y1.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}" fill="#ffffff" opacity="${(0.3 + (i % 3) * 0.06).toFixed(2)}"/>`
   })
   const rot = (d: number) => `${d} ${SX * Q} ${2 * Q}`
-  back += `<g>${rays}<animateTransform attributeName="transform" type="rotate" values="${rot(-5)};${rot(5)}" dur="${dur}s" repeatCount="indefinite"/></g>`
+  back += `<g>${rays}${tapTf('rotate', [[0, rot(-5)], [dur / 2, rot(5)], [dur, rot(-5)]], '0.45 0 0.55 1')}</g>`
 
   // floor: a pale plane with a bright line where it meets the void
   const floor = new Pix().rect(0, 42, GW, 1, '#fbf9ff').rect(0, 43, GW, 1, '#e2daf0')
@@ -3930,15 +4302,15 @@ function tapestry() {
   s += `<g mask="url(#tapFade)">${back}</g>`
 
   // the light at the source: steady, and it opens slowly as Q arrives
-  s += `<ellipse cx="${SX * Q}" cy="${30 * Q}" rx="18" ry="44" fill="url(#tapGlow)" opacity="0.55">${tapTrack('rx', [[B0, 18], [B1, 44]])}${tapTrack('ry', [[B0, 44], [B1, 52]])}${tapTrack('opacity', [[B0, 0.55], [B1, 0.9]])}</ellipse>`
-  s += `<ellipse cx="${SX * Q}" cy="${43 * Q}" rx="34" ry="6" fill="url(#tapHalo)" opacity="0.6">${tapTrack('opacity', [[B0, 0.6], [B1, 1]])}</ellipse>`
+  s += `<ellipse cx="${SX * Q}" cy="${30 * Q}" rx="18" ry="44" fill="url(#tapGlow)" opacity="0.55">${tapTrack('rx', [[B0, 18], [B1, 44], [R0, 44], [R1, 18]])}${tapTrack('ry', [[B0, 44], [B1, 52], [R0, 52], [R1, 44]])}${tapTrack('opacity', [[B0, 0.55], [B1, 0.9], [R0, 0.9], [R1, 0.55]])}</ellipse>`
+  s += `<ellipse cx="${SX * Q}" cy="${43 * Q}" rx="34" ry="6" fill="url(#tapHalo)" opacity="0.6">${tapTrack('opacity', [[B0, 0.6], [B1, 1], [R0, 1], [R1, 0.6]])}</ellipse>`
 
   // keep the title corner dark and quiet
   s += `<rect x="0" y="${30 * Q}" width="${80 * Q}" height="${18 * Q}" fill="url(#tapCorner)"/>`
 
   // rising motes of light (single pixels, slow)
   for (let i = 0; i < 7; i++) {
-    const d = 3.6 + (i % 3) * 0.9
+    const d = dur / (5 - (i % 3)) // periods that divide the story, so the loop is seamless
     const x = 48 + i * 6
     s += `<rect x="${x * Q}" y="${41 * Q}" width="${Q}" height="${Q}" fill="${i % 2 ? '#ffffff' : '#ffe9a8'}" opacity="0"><animateMotion path="M0 0 q ${i % 2 ? 6 : -6} -16 ${i % 2 ? -2 : 3} -34 t ${i % 2 ? 4 : -4} -30" dur="${d}s" begin="${-i * 0.6}s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.9;0.7;0" dur="${d}s" begin="${-i * 0.6}s" repeatCount="indefinite"/></rect>`
   }
@@ -3951,7 +4323,7 @@ function tapestry() {
     pillar.set(SX - Math.floor(w / 2) - 1, y, '#fff3c4').set(SX + Math.ceil(w / 2), y, '#fff3c4')
   }
   pillar.rect(SX - 1, 6, 2, 34, '#ffffff')
-  s += `<g opacity="0.85">${pillar.svg()}${tapTrack('opacity', [[B0 + 0.3, 0.85], [B1, 0]])}</g>`
+  s += `<g opacity="0.85">${pillar.svg()}${tapTrack('opacity', [[B0 + 0.3, 0.85], [B1, 0], [R0 + 0.1, 0], [R1, 0.85]])}</g>`
 
   // ---- Q: white robes, glowing, arms spread ----
   const qx = 60
@@ -3974,48 +4346,49 @@ function tapestry() {
   qb.rect(qx - 1, qy + 13, 20, 1, '#ddd3ec')
   let qs = qb.svg()
   // arms: spread in welcome, rest, one claw up then both for the grand gesture, rest, spread again
-  const spread: [number, number][] = [[0, 11.3], [14.3, dur]]
-  const restQ: [number, number][] = [[11.3, 11.5], [12.9, 14.3]]
-  const leftUp: [number, number][] = [[11.5, 12.9]]
-  const rightUp: [number, number][] = [[11.75, 12.9]]
+  // every change steps through the half-raised arm (~0.1 s)
+  const spread: [number, number][] = [[0, 11.2], [14.3, dur]]
   const armsSpread = tapArmSpread(QD, qx, qy, 'left', '#ffffff', '#d9cfeb') + tapArmSpread(QD, qx, qy, 'right', '#ffffff', '#d9cfeb')
   qs += shown(armsSpread, spread, dur)
-  qs += shown(armRestHD(QD, qx, qy, 'left'), restQ, dur)
-  qs += shown(armRestHD(QD, qx, qy, 'right'), [...restQ, [11.5, 11.75]], dur)
-  qs += shown(armUpHD(QD, qx, qy, 'left'), leftUp, dur)
-  qs += shown(armUpHD(QD, qx, qy, 'right'), rightUp, dur)
+  qs += shown(armRestHD(QD, qx, qy, 'left'), [[11.3, 11.42], [13.0, 14.2]], dur)
+  qs += shown(armRestHD(QD, qx, qy, 'right'), [[11.3, 11.67], [13.0, 14.2]], dur)
+  qs += shown(armMidHD(QD, qx, qy, 'left'), [[11.2, 11.3], [11.42, 11.5], [12.9, 13.0], [14.2, 14.3]], dur)
+  qs += shown(armMidHD(QD, qx, qy, 'right'), [[11.2, 11.3], [11.67, 11.75], [12.9, 13.0], [14.2, 14.3]], dur)
+  qs += shown(armUpHD(QD, qx, qy, 'left'), [[11.5, 12.9]], dur)
+  qs += shown(armUpHD(QD, qx, qy, 'right'), [[11.75, 12.9]], dur)
   qs += tapLidsAt(QD, qx, qy, qex, [[13.5, 13.62]])
   qs += tapLidsAt(QD, qx, qy, qex, [[14.5, dur]], 1) // smug, half-lidded
   const qhops = hopQ([[10.5, 10.75], [10.95, 11.2], [11.8, 12.05]], dur)
   // the radiant aura behind him, steady once he is there
   const aura = `<ellipse cx="${(qx + 9) * Q}" cy="${(qy + 6) * Q}" rx="32" ry="26" fill="url(#tapHalo)" opacity="0.85"/>`
-  s += `<g opacity="0">${aura}<g>${qs}${qhops}</g>${tapTrack('opacity', [[B0 + 0.3, 0], [B1, 1]])}</g>`
+  s += `<g opacity="0">${aura}<g>${qs}${qhops}</g>${tapTrack('opacity', [[B0 + 0.3, 0], [B1, 1], [R0 - 0.05, 1], [R1 - 0.3, 0]])}</g>`
 
   // ---- Picard: wakes, stands, looks around, walks slowly in, startles back ----
   const PD = TAP_PICARD
   const px0 = 12
   const py = 28
-  type Key = { t: number; x: number; leg: number }
-  const keys: Key[] = [{ t: 0, x: 12, leg: -1 }, { t: 2.6, x: 12, leg: 0 }]
-  const W0 = 4.4
-  for (let i = 0; i < 8; i++) keys.push({ t: W0 + i * 0.4, x: 14 + i * 2, leg: i % 2 ? 2 : 1 })
-  keys.push({ t: W0 + 8 * 0.4, x: 28, leg: 0 })
-  keys.push({ t: 9.85, x: 26, leg: 1 })
-  keys.push({ t: 10.15, x: 24, leg: 2 })
-  keys.push({ t: 10.45, x: 24, leg: 0 })
-  const kt = keys.map(k => +(k.t / dur).toFixed(4)).join(';')
-  const walk = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${keys.map(k => `${(k.x - px0) * Q} 0`).join(';')}" keyTimes="${kt}"/>`
-  const legWin = (f: number) => {
-    const on: [number, number][] = []
-    keys.forEach((k, i) => {
-      if (k.leg === f) on.push([k.t, i + 1 < keys.length ? keys[i + 1].t : dur])
-    })
-    return on
+  // the walk: an eased glide in (and the startled step back), legs stepping at ~7 Hz
+  // (one pair lifted, all down, the other pair, all down); at the end he fades out and
+  // fades back in, asleep, where he lay at the start
+  const W0 = 4.3
+  const W1 = 7.4
+  const S0 = 9.75
+  const S1 = 10.45
+  const F = [15.8, 16.35, 16.5, 17.1] // fade out, (moved back unseen), fade in asleep
+  const at = (x: number) => `${(x - px0) * Q} 0`
+  const walk = tapTf('translate', [[W0, at(12)], [W1, at(28)], [S0 - 0.05, at(28)], [S1, at(24)], [F[1] + 0.03, at(24)], [F[1] + 0.08, at(12)]], '0.3 0 0.6 1')
+  const fade = tapTrack('opacity', [[F[0], 1], [F[1], 0], [F[2], 0], [F[3], 1]])
+  const legOn: [number, number][][] = [[], [], []]
+  let lastEnd = 0
+  for (const [a, b] of [[W0, W1], [S0, S1]]) {
+    legOn[0].push([lastEnd, a])
+    const n = Math.round((b - a) / 0.14)
+    for (let i = 0; i < n; i++) legOn[[1, 0, 2, 0][i % 4]].push([a + (i * (b - a)) / n, a + ((i + 1) * (b - a)) / n])
+    lastEnd = b
   }
-  // getting up: crouched low, then two steps up to standing
-  const riseT = [0, 2.0, 2.3, 2.6]
-  const riseD = [3, 2, 1, 0]
-  const rise = `<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${dur}s" repeatCount="indefinite" values="${riseD.map(d => `0 ${d * Q}`).join(';')}" keyTimes="${riseT.map(t => +(t / dur).toFixed(4)).join(';')}"/>`
+  legOn[0].push([lastEnd, dur])
+  // getting up: an eased rise out of the crouch; the legs below are cut off at the floor
+  const rise = tapTf('translate', [[2.0, `0 ${3 * Q}`], [2.6, '0 0'], [F[1] + 0.03, '0 0'], [F[1] + 0.08, `0 ${3 * Q}`]])
 
   const details = (p: Pix) => {
     p.rect(px0 + 12, 34, 2, 2, '#e8c547').set(px0 + 12, 34, '#fff3b0')
@@ -4024,23 +4397,26 @@ function tapestry() {
   const { p: pbR, ex: pexR } = tapBody(PD, px0, py, 'right')
   details(pbR)
   pbR.rect(px0 + 16, py + 1, 1, 5, '#f09a76') // the light washing over his right side
-  const { p: pbL, ex: pexL } = tapBody(PD, px0, py, 'left')
-  details(pbL)
-  pbL.rect(px0 + 17, py + 1, 1, 5, PD.rim).rect(px0, py + 1, 1, 5, PD.shade).set(px0 + 17, py + 8, PD.lower!).set(px0, py + 8, PD.lowerShade!)
-  const lookLeft: [number, number][] = [[2.9, 3.95]]
-  let ps = shown(pbR.svg(), complement(lookLeft, dur), dur) + shown(pbL.svg(), lookLeft, dur)
-  ps += tapLidsAt(PD, px0, py, pexR, [[0, 1.6], [1.85, 1.97], [5.6, 5.72], [15.3, 15.42]])
-  ps += tapLidsAt(PD, px0, py, pexL, [[3.35, 3.47]])
-  for (const f of [0, 1, 2]) ps += shown(tapLegs(PD, px0, py, f), legWin(f), dur)
-  ;[[0, 2.0, 1], [2.0, 2.3, 2], [2.3, 2.6, 3]].forEach(([a, b, h]) => (ps += shown(tapTucked(PD, px0, py, h), [[a, b]], dur)))
-  // the protest: claw comes up in two frames, holds, comes down
-  const half: [number, number][] = [[12.9, 13.15], [14.15, 14.4]]
+  let ps = pbR.svg()
+  // looking around: the eyes slide left through a halfway frame, and back
+  ps += shown(tapEyes(PD, px0, py, 1), [[2.9, 3.0], [3.95, 4.05]], dur)
+  ps += shown(tapEyes(PD, px0, py, 2), [[3.0, 3.95]], dur)
+  // asleep, then the lids lift in steps; blinks
+  ps += tapLidsAt(PD, px0, py, pexR, [[0, 1.6], [1.85, 1.97], [5.6, 5.72], [15.3, 15.42], [F[1], dur]])
+  ps += tapLidsAt(PD, px0, py, pexR, [[1.6, 1.7]], 2)
+  ps += tapLidsAt(PD, px0, py, pexR, [[1.7, 1.8]], 1)
+  ps += tapLidsAt(PD, px0, py, [4, 10], [[3.35, 3.47]])
+  for (const f of [0, 1, 2]) ps += shown(tapLegs(PD, px0, py, f), legOn[f], dur)
+  // the protest: the claw comes up through two in-between frames, holds, comes down the same way
+  const half: [number, number][] = [[12.9, 13.02], [14.27, 14.4]]
+  const mid: [number, number][] = [[13.02, 13.15], [14.15, 14.27]]
   const up: [number, number][] = [[13.15, 14.15]]
   ps += shown(armRestHD(PD, px0, py, 'left'), [[0, dur]], dur)
-  ps += shown(armRestHD(PD, px0, py, 'right'), complement(merge([...half, ...up]), dur), dur)
+  ps += shown(armRestHD(PD, px0, py, 'right'), complement(merge([...half, ...mid, ...up]), dur), dur)
   ps += shown(tapArmHalfRight(PD, px0, py), half, dur)
+  ps += shown(armMidHD(PD, px0, py, 'right'), mid, dur)
   ps += shown(armUpHD(PD, px0, py, 'right'), up, dur)
-  s += `<g>${walk}<g>${rise}<g>${ps}${hopQ([[9.6, 9.82]], dur)}</g></g></g>`
+  s += `<g>${walk}${fade}<g clip-path="url(#tapFloorClip)"><g>${rise}<g>${ps}${hopQ([[9.6, 9.82]], dur)}</g></g></g></g>`
 
   return s
 }
@@ -4087,17 +4463,41 @@ const EMH_DEMAT: [number, number] = [14.8, 16.2] // fades out, 1.4 s
 // ---------- timing: every story animation spans the whole scene, keyTimes 0 .. 1 ----------
 
 const emhKt = (t: number) => +Math.min(1, Math.max(0, t / EMH_D)).toFixed(4)
+const EMH_INOUT = '0.45 0 0.55 1' // gentle ease in and out
+const EMH_LOOP = (n: number) => +(EMH_D / n).toFixed(4) // ambient periods that divide the scene exactly
 
 // one animation over the scene; pts are [seconds, value]; first time 0, last time = scene end
-function emhAnim(attr: string, pts: [number, string | number][], mode: 'discrete' | 'linear' = 'discrete', type = '') {
+function emhAnim(attr: string, pts: [number, string | number][], mode: 'discrete' | 'linear' | 'spline' = 'discrete', type = '', spline = EMH_INOUT) {
   const p = [...pts]
   if (p[0][0] > 0) p.unshift([0, p[0][1]])
   if (p[p.length - 1][0] < EMH_D) p.push([EMH_D, p[p.length - 1][1]])
   const tag = type ? 'animateTransform' : 'animate'
-  return `<${tag} attributeName="${attr}"${type ? ` type="${type}"` : ''} calcMode="${mode}" dur="${EMH_D}s" repeatCount="indefinite" values="${p.map(v => v[1]).join(';')}" keyTimes="${p.map(v => emhKt(v[0])).join(';')}"/>`
+  const ks = mode === 'spline' ? ` keySplines="${p.slice(1).map(() => spline).join(';')}"` : ''
+  return `<${tag} attributeName="${attr}"${type ? ` type="${type}"` : ''} calcMode="${mode}"${ks} dur="${EMH_D}s" repeatCount="indefinite" values="${p.map(v => v[1]).join(';')}" keyTimes="${p.map(v => emhKt(v[0])).join(';')}"/>`
 }
 
-// visible inside the windows, hidden outside (discrete; for small pose swaps)
+// Pix written as one <path> per colour: far smaller than one <rect> per run
+function emhPath(p: Pix) {
+  const m = (p as any).m as Map<number, Map<number, string>>
+  const by = new Map<string, string>()
+  for (const [y, row] of m) {
+    const xs = [...row.keys()].sort((a, b) => a - b)
+    let i = 0
+    while (i < xs.length) {
+      const c = row.get(xs[i])!
+      let j = i
+      while (j + 1 < xs.length && xs[j + 1] === xs[j] + 1 && row.get(xs[j + 1]) === c) j++
+      const w = (xs[j] - xs[i] + 1) * Q
+      if (c !== 'none') by.set(c, (by.get(c) || '') + `M${xs[i] * Q} ${y * Q}h${w}v${Q}h-${w}z`)
+      i = j + 1
+    }
+  }
+  let out = ''
+  for (const [c, d] of by) out += `<path fill="${c}" d="${d}"/>`
+  return out
+}
+
+// visible inside the windows, hidden outside (discrete; for single drawing steps)
 function emhOn(svg: string, wins: [number, number][]) {
   const w = merge(wins)
   const pts: [number, number][] = [[0, w.length && w[0][0] <= 0 ? 1 : 0]]
@@ -4108,6 +4508,26 @@ function emhOn(svg: string, wins: [number, number][]) {
   return `<g>${svg}${emhAnim('opacity', pts)}</g>`
 }
 
+// a flip-book: each drawing shows from its start until the next one starts ('' = nothing)
+function emhTrack(segs: [string, number][]) {
+  const m = new Map<string, [number, number][]>()
+  segs.forEach(([svg, t], i) => {
+    if (!svg) return
+    const end = i + 1 < segs.length ? segs[i + 1][1] : EMH_D
+    m.set(svg, [...(m.get(svg) || []), [t, end]])
+  })
+  let s = ''
+  for (const [svg, w] of m) s += emhOn(svg, w)
+  return s
+}
+
+// lifted by `amp` px inside each window, easing up and back down over `r` seconds
+function emhLift(wins: [number, number][], amp: number, r: number) {
+  const pts: [number, string][] = [[0, '0 0']]
+  for (const [a, b] of merge(wins)) pts.push([a, '0 0'], [a + r, `0 ${-amp}`], [b - r, `0 ${-amp}`], [b, '0 0'])
+  return emhAnim('transform', pts, 'spline', 'translate')
+}
+
 // fades in over `r` seconds from a, out over `r` seconds until b
 function emhFade(svg: string, a: number, b: number, r = 0.3, peak = 1) {
   return `<g opacity="0">${svg}${emhAnim('opacity', [[0, 0], [a, 0], [a + r, peak], [b - r, peak], [b, 0]], 'linear')}</g>`
@@ -4115,19 +4535,22 @@ function emhFade(svg: string, a: number, b: number, r = 0.3, peak = 1) {
 
 // ---------- the Doctor's parts ----------
 
-// claw on the hip: out from the shoulder, down, and back in onto the belt
-function emhArmHips(k: CrabHD, x: number, y: number, side: Side) {
-  const rows = ['sss.', 'sss.', 'hs..', 'ss..', '.ssl', '.hh.']
+// an arm drawn from rows: column 0 is the outermost; s skin, h shade, l light
+const EMH_ARM = {
+  rest: ['sss', 'sss', 'hhh'],
+  m1: ['sss.', 'sss.', 'hsh.', 'h...'], // the claw starts to swing down
+  m2: ['sss.', 'sss.', 'hs..', 'ss..', '.hh.'], // ... and in
+  hips: ['sss.', 'sss.', 'hs..', 'ss..', '.ssl', '.hh.'], // claw on the hip
+}
+function emhArmRows(k: CrabHD, x: number, y: number, side: Side, rows: string[]) {
   const p = new Pix()
   rows.forEach((r, j) => {
     for (let i = 0; i < r.length; i++) {
       const c = r[i] === 's' ? k.skin : r[i] === 'h' ? k.shade : r[i] === 'l' ? k.light : ''
-      if (!c) continue
-      const ax = side === 'left' ? x - 3 + i : x + 20 - i
-      p.set(ax, y + 4 + j, c)
+      if (c) p.set(side === 'left' ? x - 3 + i : x + 20 - i, y + 4 + j, c)
     }
   })
-  return p.svg()
+  return emhPath(p)
 }
 
 // medical tricorder, held out flat with the screen towards us
@@ -4136,24 +4559,17 @@ function emhTricorder(p: Pix, x: number, y: number, screen = '#6fe8ff') {
   p.set(x, y + 3, '#33374a').set(x + 3, y + 3, '#33374a')
 }
 
-function emhArmScan(k: CrabHD, x: number, y: number) {
+// left claw gripping the tricorder at (tx, ty): the forearm reaches out from the shoulder.
+// At tx = x - 13, ty = y + 3 this is the full scanning reach.
+function emhArmGrip(k: CrabHD, x: number, y: number, tx: number, ty: number, screen = '#6fe8ff') {
   const p = new Pix()
-  p.rect(x - 8, y + 4, 8, 2, k.skin).rect(x - 8, y + 6, 8, 1, k.shade).set(x - 8, y + 4, k.light)
-  emhTricorder(p, x - 13, y + 3)
-  // pincers gripping it
-  p.rect(x - 10, y + 2, 2, 1, k.skin).set(x - 10, y + 2, k.light)
-  p.rect(x - 10, y + 7, 2, 1, k.shade)
-  p.rect(x - 9, y + 3, 1, 4, k.skin)
-  return p.svg()
-}
-
-// halfway out: the forearm swinging forward with the tricorder
-function emhArmReach(k: CrabHD, x: number, y: number) {
-  const p = new Pix()
-  p.rect(x - 5, y + 4, 5, 2, k.skin).rect(x - 5, y + 6, 5, 1, k.shade)
-  emhTricorder(p, x - 9, y + 4)
-  p.rect(x - 6, y + 4, 1, 3, k.skin)
-  return p.svg()
+  const len = x - tx - 5
+  if (len > 0) p.rect(x - len, y + 4, len, 2, k.skin).rect(x - len, y + 6, len, 1, k.shade).set(x - len, y + 4, k.light)
+  emhTricorder(p, tx, ty, screen)
+  p.rect(tx + 3, ty - 1, 2, 1, k.skin).set(tx + 3, ty - 1, k.light)
+  p.rect(tx + 3, ty + 4, 2, 1, k.shade)
+  p.rect(tx + 4, ty, 1, 4, k.skin)
+  return emhPath(p)
 }
 
 // tricorder raised in front of him to read the result: a green screen
@@ -4163,18 +4579,20 @@ function emhArmRead(k: CrabHD, x: number, y: number) {
   p.rect(x - 5, y + 2, 2, 4, k.skin).set(x - 5, y + 2, k.light)
   emhTricorder(p, x - 9, y + 1, '#7dff9a')
   p.set(x - 8, y + 3, '#7dff9a').set(x - 7, y + 3, '#4b5064') // a tick mark on the screen
-  return p.svg()
+  return emhPath(p)
 }
 
-// right claw halfway up (between rest and raised)
-function emhArmHalfUp(k: CrabHD, x: number, y: number) {
+// right claw raised h art px (8 = fully up)
+function emhArmRaise(k: CrabHD, x: number, y: number, h: number) {
   const p = new Pix()
+  const top = y + 4 - h
+  const tip = h >= 6 ? 3 : 2
   p.rect(x + 18, y + 4, 3, 2, k.skin)
-  p.rect(x + 19, y, 2, 4, k.skin).rect(x + 20, y, 1, 4, k.shade)
-  p.rect(x + 18, y - 3, 1, 2, k.skin).rect(x + 21, y - 3, 1, 2, k.skin)
-  p.rect(x + 18, y - 2, 4, 1, k.skin).rect(x + 19, y - 1, 2, 1, k.skin)
-  p.set(x + 18, y - 3, k.light).set(x + 21, y - 3, k.light)
-  return p.svg()
+  p.rect(x + 19, top, 2, h, k.skin).rect(x + 20, top, 1, h, k.shade)
+  p.rect(x + 18, top - 1 - tip, 1, tip, k.skin).rect(x + 21, top - 1 - tip, 1, tip, k.skin)
+  p.rect(x + 18, top - 2, 4, 1, k.skin).rect(x + 19, top - 1, 2, 1, k.skin)
+  p.set(x + 18, top - 1 - tip, k.light).set(x + 21, top - 1 - tip, k.light)
+  return emhPath(p)
 }
 
 function emhDoctor() {
@@ -4198,65 +4616,77 @@ function emhDoctor() {
   p.set(x + 17, y + 6, '#1f6f80').set(x + 17, y + 7, '#1f6f80')
   p.rect(x + 12, y + 7, 2, 1, '#e8c547').set(x + 13, y + 7, '#fff3b0')
   p.rect(x + 1, y + 8, 16, 1, '#26232f')
-  let s = p.svg()
+  let s = emhPath(p)
 
-  // eyes: looking left, pleased (^ ^), looking right (turned back), with blinks
+  // eyes: one pair that glides from looking left to looking right when he turns back,
+  // a squint step into and out of the pleased ^ ^ look, and blinks
   const EYE = '#1a1020'
-  const eyes = (xs: number[]) => {
-    const e = new Pix()
-    xs.forEach(c => e.rect(x + c, y + 2, 2, 3, EYE))
-    return e.svg()
-  }
+  const eyes = new Pix()
+  const squint = new Pix()
   const happy = new Pix()
-  for (const c of [4, 10]) happy.rect(x + c, y + 2, 2, 1, EYE).set(x + c - 1, y + 3, EYE).set(x + c + 2, y + 3, EYE)
-  s += emhOn(eyes([4, 10]), [[0, 5.0], [5.15, 8.3], [8.45, 10.9], [11.05, EMH_PLEASED]])
-  s += emhOn(happy.svg(), [[EMH_PLEASED, EMH_WAIT2[0]]])
-  s += emhOn(eyes([6, 12]), [[EMH_WAIT2[0], 14.3], [14.45, EMH_D]])
-  // a frown while he waits: brows pulled down
-  s += emhOn(new Pix().rect(x + 5, y + 1, 3, 1, hair).rect(x + 11, y + 1, 3, 1, hair).svg(), [[13.6, EMH_D]])
+  for (const c of [4, 10]) {
+    eyes.rect(x + c, y + 2, 2, 3, EYE)
+    squint.rect(x + c, y + 2, 2, 2, EYE)
+    happy.rect(x + c, y + 2, 2, 1, EYE).set(x + c - 1, y + 3, EYE).set(x + c + 2, y + 3, EYE)
+  }
+  const look = emhAnim('transform', [[0, '0 0'], [13.28, '0 0'], [13.52, `${2 * Q} 0`], [EMH_D - 0.05, `${2 * Q} 0`], [EMH_D, '0 0']], 'spline', 'translate')
+  s += `<g>${emhOn(emhPath(eyes), [[0, 5.0], [5.15, 8.3], [8.45, 10.9], [11.05, EMH_PLEASED], [13.28, 14.3], [14.45, EMH_D]])}${look}</g>`
+  s += emhTrack([['', 0], [emhPath(squint), EMH_PLEASED], [emhPath(happy), EMH_PLEASED + 0.08], [emhPath(squint), EMH_WAIT2[0]], ['', 13.28]])
+  // a frown while he waits: brows pulled down, easing in
+  s += emhFade(emhPath(new Pix().rect(x + 5, y + 1, 3, 1, hair).rect(x + 11, y + 1, 3, 1, hair)), 13.6, EMH_D, 0.35)
 
-  // legs: pairs lift in turn while he walks, the far right one taps while he waits
+  // legs: pairs lift in turn while he walks, the far right one taps while he waits;
+  // every lift eases up one art pixel and back down
   const stepAt = (i: number) => EMH_WALK[0] + (i * (EMH_WALK[1] - EMH_WALK[0])) / EMH_STEPS
   const lifts: [number, number][][] = [[], []]
   for (let i = 0; i < EMH_STEPS; i++) lifts[i % 2].push([stepAt(i), stepAt(i) + 0.2])
   const taps: [number, number][] = [[13.5, 13.8], [14.1, 14.4], [14.7, 15.0]]
-  const legCol = '#1b1924'
-  const footCol = '#2b2836'
-  ;[1, 5, 11, 15].forEach((lx, n) => {
+  ;[1, 5, 11, 15].forEach(lx => {
     const pair = lx === 1 || lx === 11 ? 0 : 1
-    const down = new Pix().rect(x + lx, y + 10, 2, 4, legCol).set(x + lx, y + 13, footCol).svg()
-    const lifted = new Pix().rect(x + lx, y + 10, 2, 3, legCol).set(x + lx, y + 12, footCol).svg()
-    const busy = lx === 15 ? [...lifts[pair], ...taps] : lifts[pair]
-    s += emhOn(down, complement(merge(busy), EMH_D))
-    s += emhOn(lifted, lifts[pair])
-    if (lx === 15) s += emhOn(new Pix().rect(x + 15, y + 10, 2, 2, legCol).rect(x + 16, y + 12, 2, 1, footCol).svg(), taps)
-    void n
+    const leg = emhPath(new Pix().rect(x + lx, y + 10, 2, 4, '#1b1924').set(x + lx, y + 13, '#2b2836'))
+    s += `<g>${leg}${emhLift(lx === 15 ? [...lifts[pair], ...taps] : lifts[pair], Q, 0.07)}</g>`
   })
 
-  // arms
+  // left claw (holds the tricorder): to the hip, out to scan, up to read, back to the hip
+  const L = (rows: string[]) => emhArmRows(k, x, y, 'left', rows)
+  const G = (dx: number, dy: number, scr?: string) => emhArmGrip(k, x, y, x - dx, y + dy, scr)
+  const GREEN = '#7dff9a'
+  const A = EMH_ARM
+  s += emhTrack([
+    [L(A.rest), 0], [L(A.m1), 5.7], [L(A.m2), 5.79], [L(A.hips), 5.88],
+    [L(A.m2), 7.4], [L(A.m1), 7.49], [L(A.rest), 7.58],
+    [G(8, 5), 9.4], [G(9, 4), 9.45], [G(10, 4), 9.5], [G(11, 3), 9.55], [G(12, 3), 9.6], [G(13, 3), 9.65],
+    [G(12, 3), 11.6], [G(11, 2), 11.66], [G(10, 2, GREEN), 11.72], [emhArmRead(k, x, y), 11.78],
+    [G(8, 2, GREEN), 13.2], [G(7, 3), 13.27], [G(6, 5), 13.34], [L(A.rest), 13.41],
+    [L(A.m1), 13.5], [L(A.m2), 13.59], [L(A.hips), 13.68],
+  ])
+  // the tricorder in his resting claw slides in to the belt as the claw goes to the hip ...
   const tri = new Pix()
   emhTricorder(tri, x - 5, y + 6)
-  const restL = armRestHD(k, x, y, 'left') + tri.svg()
-  const hipsOn: [number, number][] = [EMH_WAIT1, [EMH_WAIT2[0], EMH_D]]
-  s += emhOn(restL, [[0, EMH_WAIT1[0]], EMH_WALK])
-  s += emhOn(armRestHD(k, x, y, 'right'), [[0, 4.1], [5.5, EMH_WAIT1[0]], EMH_WALK, EMH_REACH])
-  s += emhOn(emhArmHalfUp(k, x, y), [[4.1, 4.25], [5.35, 5.5]])
-  s += emhOn(armUpHD(k, x, y, 'right'), [[4.25, 5.35]])
-  s += emhOn(emhArmHips(k, x, y, 'left'), hipsOn)
-  s += emhOn(emhArmHips(k, x, y, 'right'), [EMH_WAIT1, [EMH_SCAN[0], EMH_D]])
-  s += emhOn(emhArmReach(k, x, y), [EMH_REACH])
-  s += emhOn(emhArmScan(k, x, y), [EMH_SCAN])
-  s += emhOn(emhArmRead(k, x, y), [EMH_READ])
-  // tricorder clipped to the belt when both claws are on his hips
-  s += emhOn(new Pix().rect(x + 3, y + 8, 3, 2, '#4b5064').set(x + 4, y + 8, '#6fe8ff').svg(), hipsOn)
+  const tIn = `${3 * Q} ${Q}`
+  s += `<g>${emhPath(tri)}${emhAnim('opacity', [[0, 1], [5.7, 1], [5.97, 0], [7.4, 0], [7.67, 1], [9.4, 1], [9.4, 0], [13.41, 0], [13.41, 1], [13.5, 1], [13.77, 0]], 'linear')}${emhAnim('transform', [[0, '0 0'], [5.7, '0 0'], [5.97, tIn], [7.4, tIn], [7.67, '0 0'], [13.5, '0 0'], [13.77, tIn], [EMH_D - 0.05, tIn], [EMH_D, '0 0']], 'spline', 'translate')}</g>`
+  // ... where it is clipped on
+  const bIn = `${-3 * Q} ${-Q}`
+  s += `<g opacity="0">${emhPath(new Pix().rect(x + 3, y + 8, 3, 2, '#4b5064').set(x + 4, y + 8, '#6fe8ff'))}${emhAnim('opacity', [[0, 0], [5.7, 0], [5.97, 1], [7.4, 1], [7.67, 0], [13.5, 0], [13.77, 1], [EMH_D - 0.05, 1], [EMH_D, 0]], 'linear')}${emhAnim('transform', [[0, bIn], [5.7, bIn], [5.97, '0 0'], [7.4, '0 0'], [7.67, bIn], [13.5, bIn], [13.77, '0 0'], [EMH_D - 0.05, '0 0'], [EMH_D, bIn]], 'spline', 'translate')}</g>`
+
+  // right claw: raised for the question in four steps and down again, then to the hip
+  const R = (rows: string[]) => emhArmRows(k, x, y, 'right', rows)
+  const U = (h: number) => emhArmRaise(k, x, y, h)
+  s += emhTrack([
+    [R(A.rest), 0], [U(2), 4.1], [U(4), 4.19], [U(6), 4.28], [U(8), 4.37],
+    [U(6), 5.23], [U(4), 5.32], [U(2), 5.41], [R(A.rest), 5.5],
+    [R(A.m1), 5.7], [R(A.m2), 5.79], [R(A.hips), 5.88],
+    [R(A.m2), 7.4], [R(A.m1), 7.49], [R(A.rest), 7.58],
+    [R(A.m1), 9.6], [R(A.m2), 9.69], [R(A.hips), 9.78],
+  ])
   // the tricorder light while scanning: red / green, once a second
   s += emhOn(
     `<rect x="${(x - 12) * Q}" y="${(y + 5) * Q}" width="${Q}" height="${Q}" fill="#ff5a5a"><animate attributeName="fill" values="#ff5a5a;#7dff9a;#7dff9a" calcMode="discrete" dur="1s" keyTimes="0;0.5;1" repeatCount="indefinite"/></rect>`,
-    [EMH_SCAN],
+    [[9.65, EMH_SCAN[1]]],
   )
 
-  // a small satisfied nod
-  return `<g>${s}${emhAnim('transform', [[0, '0 0'], [12.55, `0 ${Q}`], [12.85, '0 0']], 'discrete', 'translate')}</g>`
+  // a small satisfied nod, eased down and back up
+  return `<g>${s}${emhAnim('transform', [[0, '0 0'], [12.55, '0 0'], [12.72, `0 ${Q}`], [12.98, '0 0']], 'spline', 'translate')}</g>`
 }
 
 // speech bubble with a pixel glyph
@@ -4265,7 +4695,7 @@ function emhBubble(glyph: string[], x: number, y: number) {
   const p = new Pix().rows(body, x, y, { w: '#e2eef8' })
   p.rect(x + 1, y + 8, 9, 1, '#b9cde6')
   p.rows(glyph, x + 3, y + 1, { k: '#1d2a4a', r: '#d8342f' })
-  return p.svg()
+  return emhPath(p)
 }
 
 // the holographic glow, the light line riding the reveal edge, slow sparkles
@@ -4273,10 +4703,10 @@ function emhShimmer(X: number, win: [number, number], closing: boolean) {
   const [a, b] = win
   let s = ''
   s += `<g opacity="0"><ellipse cx="${(X + 9) * Q}" cy="${33 * Q}" rx="${15 * Q}" ry="${13 * Q}" fill="url(#emhHolo)"/>${emhAnim('opacity', [[0, 0], [a - 0.5, 0], [a, 1], [b, 1], [b + 0.9, 0]], 'linear')}</g>`
-  // the edge line: down the figure over the reveal
+  // the edge line: down the figure over the reveal, eased exactly like the reveal clip
   const yA = EMH_TOP * Q
   const yB = EMH_BOT * Q
-  s += `<rect x="${(X - 5) * Q}" y="${yA}" width="${29 * Q}" height="${Q}" fill="#cdf3ff" opacity="0">${emhAnim('y', [[0, yA], [a, yA], [b, yB]], 'linear')}${emhAnim('opacity', [[0, 0], [a, 0], [a + 0.2, 0.45], [b - 0.3, 0.45], [b, 0]], 'linear')}</rect>`
+  s += `<rect x="${(X - 5) * Q}" y="${yA}" width="${29 * Q}" height="${Q}" fill="#cdf3ff" opacity="0">${emhAnim('y', [[0, yA], [a, yA], [b, yB], [EMH_D - 0.05, yB], [EMH_D, yA]], 'spline')}${emhAnim('opacity', [[0, 0], [a, 0], [a + 0.2, 0.45], [b - 0.3, 0.45], [b, 0]], 'linear')}</rect>`
   // sparkles drifting up slowly around his outline
   let seed = closing ? 77 : 41
   const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280)
@@ -4322,7 +4752,7 @@ function emhSickbay() {
   wall.rect(3, 31, 3, 3, '#5a6280').set(4, 31, '#9aa3c0').rect(7, 32, 3, 2, '#5a6280')
   // floor
   wall.rect(0, 42, GW, 6, '#121522').rect(0, 42, GW, 1, '#262c45')
-  back += wall.svg()
+  back += emhPath(wall)
   // glow under the ceiling lights
   back += `<ellipse cx="${28 * Q}" cy="${5 * Q}" rx="30" ry="9" fill="#bfe0ff" opacity="0.1"/><ellipse cx="${64 * Q}" cy="${5 * Q}" rx="30" ry="9" fill="#bfe0ff" opacity="0.1"/>`
 
@@ -4333,8 +4763,8 @@ function emhSickbay() {
   mon.rect(19, 8, 1, 3, '#f2b866')
   mon.rect(19, 17, 4, 2, '#4f8fd6').rect(24, 17, 6, 2, '#f2b866').rect(31, 17, 3, 2, '#c66a5a').rect(35, 17, 5, 2, '#4f8fd6')
   mon.rect(24, 19, 4, 1, '#7a5a3a').rect(35, 19, 3, 1, '#2d4f80')
-  back += mon.svg()
-  // the heartbeat trace, swept slowly left to right (a calm sleeping pulse)
+  back += emhPath(mon)
+  // the heartbeat trace: drawn smoothly left to right, then wiped away left to right
   const ekg = new Pix()
   const shape = [0, 0, 0, -1, 0, 0, 1, -3, 2, 0, 0, -1, 0, 0, 0, 0, 0, -1, 0, 1, -3, 2, 0]
   shape.forEach((d, i) => {
@@ -4342,15 +4772,12 @@ function emhSickbay() {
     if (d < -1) ekg.rect(18 + i, 14 + d, 1, -d, '#6fffc0')
     if (d > 1) ekg.rect(18 + i, 14, 1, d + 1, '#6fffc0')
   })
-  const SW = 3.4
-  const sweep: [number, number][] = []
-  for (let i = 0; i <= 23; i++) sweep.push([i / 24, i * Q])
-  sweep.push([1, 23 * Q])
-  const sweepAnim = `<animate attributeName="width" calcMode="discrete" dur="${SW}s" repeatCount="indefinite" values="${sweep.map(v => v[1]).join(';')}" keyTimes="${sweep.map(v => +v[0].toFixed(4)).join(';')}"/>`
-  back += `<clipPath id="emhEkgClip"><rect x="${18 * Q}" y="0" width="0" height="${H}">${sweepAnim}</rect></clipPath>`
-  back += `<g clip-path="url(#emhEkgClip)">${ekg.svg()}</g>`
+  const SW = EMH_LOOP(5)
+  const ekgA = (attr: string, v: string) => `<animate attributeName="${attr}" dur="${SW}s" repeatCount="indefinite" values="${v}" keyTimes="0;0.72;1"/>`
+  back += `<clipPath id="emhEkgClip"><rect x="${18 * Q}" y="0" width="0" height="${H}">${ekgA('width', `0;${23 * Q};0`)}${ekgA('x', `${18 * Q};${18 * Q};${41 * Q}`)}</rect></clipPath>`
+  back += `<g clip-path="url(#emhEkgClip)">${emhPath(ekg)}</g>`
   // heart light: a slow soft pulse
-  back += `<rect x="${39 * Q}" y="${10 * Q}" width="${Q}" height="${Q}" fill="#ff5a5a"><animate attributeName="opacity" values="1;0.3;1" dur="1.7s" repeatCount="indefinite"/></rect>`
+  back += `<rect x="${39 * Q}" y="${10 * Q}" width="${Q}" height="${Q}" fill="#ff5a5a"><animate attributeName="opacity" values="1;0.3;1" dur="${EMH_LOOP(10)}s" repeatCount="indefinite"/></rect>`
 
   // status display on the right wall: amber elbow and blue bars
   const pan = new Pix()
@@ -4360,9 +4787,9 @@ function emhSickbay() {
   pan.rect(59, 10, 8, 1, '#4f8fd6').rect(68, 10, 4, 1, '#f2b866')
   pan.rect(59, 12, 5, 1, '#f2b866').rect(65, 12, 7, 1, '#4f8fd6')
   pan.rect(59, 14, 10, 1, '#2f5f9c').rect(70, 14, 2, 1, '#e08a3c')
-  back += pan.svg()
-  back += `<rect x="${70 * Q}" y="${14 * Q}" width="${2 * Q}" height="${Q}" fill="#ffd36b"><animate attributeName="opacity" values="1;0.3;1" dur="2.4s" repeatCount="indefinite"/></rect>`
-  back += `<rect x="${59 * Q}" y="${10 * Q}" width="${8 * Q}" height="${Q}" fill="#9fd0ff"><animate attributeName="opacity" values="0;0.6;0" dur="3.1s" repeatCount="indefinite"/></rect>`
+  back += emhPath(pan)
+  back += `<rect x="${70 * Q}" y="${14 * Q}" width="${2 * Q}" height="${Q}" fill="#ffd36b"><animate attributeName="opacity" values="1;0.3;1" dur="${EMH_LOOP(7)}s" repeatCount="indefinite"/></rect>`
+  back += `<rect x="${59 * Q}" y="${10 * Q}" width="${8 * Q}" height="${Q}" fill="#9fd0ff"><animate attributeName="opacity" values="0;0.6;0" dur="${EMH_LOOP(5)}s" repeatCount="indefinite"/></rect>`
   return back
 }
 
@@ -4392,16 +4819,15 @@ function emhBed() {
   b.rect(36, 30, 2, 1, '#6a2e1e').rect(39, 30, 2, 1, '#6a2e1e')
   // a limp claw over the sheet
   b.rect(31, 29, 3, 2, '#d97757').set(31, 29, '#eb9575')
-  s += b.svg()
+  s += emhPath(b)
   // slow breathing: the sheet over the chest rises and settles
-  s += `<g opacity="0">${new Pix().rect(24, 29, 5, 1, sheetHi).svg()}<animate attributeName="opacity" values="0;1;0" dur="4s" repeatCount="indefinite"/></g>`
+  s += `<g opacity="0">${emhPath(new Pix().rect(24, 29, 5, 1, sheetHi))}<animate attributeName="opacity" values="0;1;0" dur="${EMH_LOOP(4)}s" repeatCount="indefinite"/></g>`
   return s
 }
 
 function doctorEmh() {
   const W = GW * Q
   const H = GH * Q
-  const dx = -EMH_STEP * Q // one step, CSS px
   let s = `<defs>
     <linearGradient id="emhFadeG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.22" stop-color="#fff" stop-opacity="1"/></linearGradient>
     <mask id="emhFade"><rect width="${W}" height="${H}" fill="url(#emhFadeG)"/></mask>
@@ -4414,40 +4840,30 @@ function doctorEmh() {
   s += emhShimmer(EMH_X, EMH_MAT, false)
   s += emhShimmer(EMH_X2, EMH_DEMAT, true)
 
-  // reveal: a clip that opens top to bottom, and later closes top to bottom
+  // reveal: a clip that opens top to bottom, and later closes top to bottom (eased)
   const full = (EMH_BOT - EMH_TOP) * Q
   const yT = EMH_TOP * Q
   const yB = EMH_BOT * Q
-  s += `<clipPath id="emhReveal"><rect x="${-W}" y="${yT}" width="${3 * W}" height="0">${emhAnim('y', [[0, yT], [EMH_DEMAT[0], yT], [EMH_DEMAT[1], yB]], 'linear')}${emhAnim('height', [[0, 0], [EMH_MAT[0], 0], [EMH_MAT[1], full], [EMH_DEMAT[0], full], [EMH_DEMAT[1], 0]], 'linear')}</rect></clipPath>`
+  s += `<clipPath id="emhReveal"><rect x="${-W}" y="${yT}" width="${3 * W}" height="0">${emhAnim('y', [[0, yT], [EMH_DEMAT[0], yT], [EMH_DEMAT[1], yB], [EMH_D - 0.05, yB], [EMH_D, yT]], 'spline')}${emhAnim('height', [[0, 0], [EMH_MAT[0], 0], [EMH_MAT[1], full], [EMH_DEMAT[0], full], [EMH_DEMAT[1], 0]], 'spline')}</rect></clipPath>`
 
-  // the walk: six steps of two art pixels, each a third of a second
-  const walk: [number, string][] = [[0, '0 0']]
-  for (let i = 0; i < EMH_STEPS; i++) {
-    const t = EMH_WALK[0] + (i * (EMH_WALK[1] - EMH_WALK[0])) / EMH_STEPS + 0.15
-    walk.push([t, `${(i + 1) * dx} 0`])
-  }
+  // the walk: one smooth glide of six steps' length while the legs lift in turn
+  const walkTo = `${-EMH_STEP * EMH_STEPS * Q} 0`
+  const walk = emhAnim('transform', [[0, '0 0'], [EMH_WALK[0], '0 0'], [EMH_WALK[1], walkTo], [EMH_D - 0.05, walkTo], [EMH_D, '0 0']], 'spline', 'translate', '0.35 0 0.65 1')
   // his shadow, fading in and out with him
   const shadow = `<ellipse cx="${(EMH_X + 9) * Q}" cy="${42.5 * Q}" rx="${12 * Q}" ry="3" fill="#06070d" opacity="0">${emhAnim('opacity', [[0, 0], [EMH_MAT[0] + 0.4, 0], [EMH_MAT[1] + 0.2, 0.6], [EMH_DEMAT[0] + 0.2, 0.6], [EMH_DEMAT[1], 0]], 'linear')}</ellipse>`
   // a little translucent while forming and fading
   const holo = emhAnim('opacity', [[0, 0.75], [EMH_MAT[0], 0.75], [EMH_MAT[1] + 0.4, 1], [EMH_DEMAT[0], 1], [EMH_DEMAT[1], 0.75]], 'linear')
-  s += `<g>${shadow}<g clip-path="url(#emhReveal)"><g>${emhDoctor()}${holo}</g></g>${emhAnim('transform', walk, 'discrete', 'translate')}</g>`
+  s += `<g>${shadow}<g clip-path="url(#emhReveal)"><g>${emhDoctor()}${holo}</g></g>${walk}</g>`
 
-  // the scan: a soft beam from the tricorder over the patient, with a slow sweeping line
+  // the scan: a soft beam from the tricorder over the patient, with a line sweeping smoothly to and fro
   const tipX = EMH_X2 - 14
   const beam = new Pix()
   for (let c = 28; c <= tipX; c++) {
     const spread = Math.round((tipX - c) * 0.3)
     for (let r = 32 - spread; r <= 33 + spread; r++) if (r >= 27 && r <= 33) beam.set(c, r, '#8fe3ff')
   }
-  const steps = 12
-  const sweepPts: [number, number][] = []
-  for (let i = 0; i < steps * 2; i++) {
-    const k = i < steps ? i : steps * 2 - 1 - i
-    sweepPts.push([i / (steps * 2), -k * Q])
-  }
-  sweepPts.push([1, 0])
-  const sweepLine = `<rect x="${tipX * Q}" y="${27 * Q}" width="${Q}" height="${7 * Q}" fill="#d8f6ff" opacity="0.6"><animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="2.4s" repeatCount="indefinite" values="${sweepPts.map(v => `${v[1]} 0`).join(';')}" keyTimes="${sweepPts.map(v => +v[0].toFixed(4)).join(';')}"/></rect>`
-  s += emhFade(`<g opacity="0.2">${beam.svg()}</g>${sweepLine}`, EMH_SCAN[0] + 0.1, EMH_SCAN[1], 0.5)
+  const sweepLine = `<rect x="${tipX * Q}" y="${27 * Q}" width="${Q}" height="${7 * Q}" fill="#d8f6ff" opacity="0.6"><animateTransform attributeName="transform" type="translate" calcMode="spline" keySplines="${EMH_INOUT};${EMH_INOUT}" dur="2.4s" repeatCount="indefinite" values="0 0;${-11 * Q} 0;0 0" keyTimes="0;0.5;1"/></rect>`
+  s += emhFade(`<g opacity="0.2">${emhPath(beam)}</g>${sweepLine}`, EMH_SCAN[0] + 0.1, EMH_SCAN[1], 0.5)
 
   // "Please state the nature of the medical emergency?" ... and the long wait
   const q = ['.kkk.', 'k...k', '....k', '..kk.', '..k..', '.....', '..k..']
@@ -4492,6 +4908,24 @@ const bobR = (x: number, y: number, w: number, h: number, c: string, extra = '')
 function bobRnd(seed: number) {
   let s = seed
   return () => ((s = (s * 9301 + 49297) % 233280) / 233280)
+}
+
+// one smooth transform on the story timeline: keys are [seconds, value, spline into it]
+const BOB_EASE = '0.42 0 0.58 1'
+function bobTween(type: string, keys: [number, string, string?][]) {
+  const T = SCENE_SECONDS
+  const k = [...keys]
+  if (k[0][0] > 0) k.unshift([0, k[0][1]])
+  if (k[k.length - 1][0] < T) k.push([T, k[k.length - 1][1]])
+  const kt = k.map(([t]) => +(t / T).toFixed(4))
+  kt[kt.length - 1] = 1
+  return `<animateTransform attributeName="transform" type="${type}" calcMode="spline" dur="${T}s" repeatCount="indefinite" values="${k.map(x => x[1]).join(';')}" keyTimes="${kt.join(';')}" keySplines="${k.slice(1).map(x => x[2] ?? BOB_EASE).join(';')}"/>`
+}
+
+// a raised claw that rises smoothly out of the shoulder (clipped at the shoulder line)
+// keys: [seconds, rows still hidden (0 = fully up, 12 = fully down), spline]
+function bobArmRise(id: string, k: CrabHD, x: number, y: number, keys: [number, number, string?][]) {
+  return `<clipPath id="${id}"><rect x="${(x + 17) * Q}" y="${(y - 9) * Q}" width="${7 * Q}" height="${13 * Q}"/></clipPath><g clip-path="url(#${id})"><g transform="translate(0 ${12 * Q})">${armUpHD(k, x, y, 'right')}${bobTween('translate', keys.map(([t, r, sp]) => [t, `0 ${r * Q}`, sp]))}</g></g>`
 }
 
 // screen content area, in art pixels
@@ -4558,10 +4992,10 @@ function bobLocutus() {
   p.rect(74, 16, 3, 2, '#3e4449')
   s += p.svg()
   // the laser from the eyepiece, sweeping
-  s += `<g><rect x="${66 * Q}" y="${10 * Q - 0.5}" width="60" height="1" fill="#ff4040"/><circle cx="${65 * Q}" cy="${10 * Q}" r="4" fill="#ff3030" opacity="0.35"/><animateTransform attributeName="transform" type="rotate" values="-10 ${65 * Q} ${10 * Q};6 ${65 * Q} ${10 * Q};-10 ${65 * Q} ${10 * Q}" dur="3.2s" repeatCount="indefinite"/></g>`
+  s += `<g><rect x="${66 * Q}" y="${10 * Q - 0.5}" width="60" height="1" fill="#ff4040"/><circle cx="${65 * Q}" cy="${10 * Q}" r="4" fill="#ff3030" opacity="0.35"/><animateTransform attributeName="transform" type="rotate" values="-10 ${65 * Q} ${10 * Q};6 ${65 * Q} ${10 * Q};-10 ${65 * Q} ${10 * Q}" calcMode="spline" keyTimes="0;0.5;1" keySplines="${BOB_EASE};${BOB_EASE}" dur="${(SCENE_SECONDS / 5).toFixed(3)}s" repeatCount="indefinite"/></g>`
   // blinking alcove lights
   ;[[31, 9], [36, 15], [80, 8], [84, 20], [31, 21]].forEach(([x, y], i) => {
-    s += `<g>${bobR(x, y, 1, 1, '#5dff95')}<animate attributeName="opacity" values="1;0.2;1" dur="${1.8 + i * 0.45}s" repeatCount="indefinite"/></g>`
+    s += `<g>${bobR(x, y, 1, 1, '#5dff95')}<animate attributeName="opacity" values="1;0.2;1" dur="${(SCENE_SECONDS / (9 - i)).toFixed(3)}s" repeatCount="indefinite"/></g>`
   })
   return s
 }
@@ -4655,7 +5089,7 @@ function bestOfBothWorldsHD() {
   lc.rect(10, 20, 13, 1, '#b48fd6')
   back += `<g opacity="0.6">${lc.svg()}</g>`
   ;[[15, 19], [18, 19], [21, 19]].forEach(([x, y], i) => {
-    back += `<g>${bobR(x, y, 2, 1, i === 1 ? '#ff6b5a' : '#f7c487')}<animate attributeName="opacity" values="1;0.35;1" dur="${1.9 + i * 0.6}s" repeatCount="indefinite"/></g>`
+    back += `<g>${bobR(x, y, 2, 1, i === 1 ? '#ff6b5a' : '#f7c487')}<animate attributeName="opacity" values="1;0.35;1" dur="${(SCENE_SECONDS / [9, 7, 6][i]).toFixed(3)}s" repeatCount="indefinite"/></g>`
   })
   // red alert strip by the right wall, steady
   back += bobR(88, 4, 2, 21, '#ff2e3a', ' opacity="0.4"')
@@ -4681,8 +5115,8 @@ function bestOfBothWorldsHD() {
 
   // Locutus: dims under the blue, then sways gently in the interference and settles
   const k = (t: number) => +(t / T).toFixed(4)
-  const sway: [number, number][] = [[0, 0], [12.0, 1], [12.45, 0], [12.9, -1], [13.35, 0], [13.8, 1], [14.25, 0]]
-  let scr = `<g>${bobLocutus()}${bobRamp([[10.0, 1], [tFull, 0.45], [12.6, 0.45], [14.0, 1]])}<animateTransform attributeName="transform" type="translate" calcMode="discrete" dur="${T}s" repeatCount="indefinite" values="${sway.map(p => `${p[1] * Q} 0`).join(';')}" keyTimes="${sway.map(p => k(p[0])).join(';')}"/></g>`
+  const sway: [number, number][] = [[11.8, 0], [12.25, 1], [13.05, -1], [13.85, 1], [14.35, 0]]
+  let scr = `<g>${bobLocutus()}${bobRamp([[10.0, 1], [tFull, 0.45], [12.6, 0.45], [14.0, 1]])}${bobTween('translate', sway.map(([t, v]) => [t, `${v * Q} 0`]))}</g>`
   // the beam leaving the ship and reaching steadily up the screen towards him
   // (the full wedge, uncovered from the bottom up by a rising clip edge)
   const reveal = `<animate attributeName="y" dur="${T}s" repeatCount="indefinite" values="${25 * Q};${25 * Q};${8 * Q};${8 * Q}" keyTimes="0;${k(tBeam)};${k(tBeamFull)};1"/>`
@@ -4695,7 +5129,7 @@ function bestOfBothWorldsHD() {
   scr += `<g opacity="0">${bobInterference()}${bobRamp([[11.3, 0], [12.3, 1], [13.2, 1], [14.4, 0]])}</g>`
   // scanlines, slow and faint, and a soft rolling bar
   scr += `<rect x="${BOB_SX * Q}" y="${BOB_SY * Q}" width="${BOB_SW * Q}" height="${BOB_SH * Q}" fill="url(#bobScan)"/>`
-  scr += `<rect x="${BOB_SX * Q}" y="0" width="${BOB_SW * Q}" height="6" fill="#c8ffd8" opacity="0.04"><animate attributeName="y" values="${BOB_SY * Q - 6};${(BOB_SY + BOB_SH) * Q}" dur="6.5s" repeatCount="indefinite"/></rect>`
+  scr += `<rect x="${BOB_SX * Q}" y="0" width="${BOB_SW * Q}" height="6" fill="#c8ffd8" opacity="0.04"><animate attributeName="y" values="${BOB_SY * Q - 6};${(BOB_SY + BOB_SH) * Q}" dur="${(SCENE_SECONDS / 3).toFixed(3)}s" repeatCount="indefinite"/></rect>`
   // glass glint
   scr += `<polygon points="${30 * Q},${3 * Q} ${36 * Q},${3 * Q} ${30 * Q},${9 * Q}" fill="#ffffff" opacity="0.06"/>`
   s += `<g clip-path="url(#bobScreen)">${scr}</g>`
@@ -4723,12 +5157,14 @@ function bestOfBothWorldsHD() {
   }
   // he lifts his claw on the order, then brings it down on the console
   const press: [number, number][] = [[tPress, tPressEnd]]
-  s += crabHD(BOB_WORF, wx, wy, 'right', T, { left: [], right: [[tWorfReady, tPress]] }, [], 4.7, worfDetails)
-  const pr = new Pix().rows(
-    ['SSS....', 'sSSS...', '..sSS..', '...SS..', '..LSSL.', '..S..S.'],
-    wx + 18, wy + 4,
-    { S: BOB_WORF.skin, s: BOB_WORF.shade, L: BOB_WORF.light },
-  )
+  s += crabHD(BOB_WORF, wx, wy, 'right', T, { left: [], right: [] }, [], T / 4, worfDetails)
+  const IN = '0.55 0 0.85 0.4'
+  s += bobArmRise('bobWorfArm', BOB_WORF, wx, wy, [[tWorfReady, 12], [tWorfReady + 0.27, 0, '0.25 0.6 0.4 1'], [tPress - 0.17, 0], [tPress - 0.03, 12, IN]])
+  const prPal = { S: BOB_WORF.skin, s: BOB_WORF.shade, L: BOB_WORF.light }
+  const prTop = new Pix().rows(['SSS....', 'sSSS...'], wx + 18, wy + 4, prPal)
+  const pr = new Pix().rows(['..sSS..', '...SS..', '..LSSL.', '..S..S.'], wx + 18, wy + 6, prPal)
+  // the reach down to the console slides out from under the shoulder (clipped)
+  const prSlide = `<clipPath id="bobPressClip"><rect x="${(wx + 18) * Q}" y="${(wy + 6) * Q}" width="${7 * Q}" height="${4 * Q}"/></clipPath><g clip-path="url(#bobPressClip)"><g transform="translate(0 ${-4 * Q})">${pr.svg()}${bobTween('translate', [[tPress - 0.07, `0 ${-4 * Q}`], [tPress + 0.05, '0 0', IN], [tPressEnd, '0 0'], [tPressEnd + 0.22, `0 ${-4 * Q}`]])}</g></g>`
 
   // the tactical console in front of him
   const con = new Pix()
@@ -4740,7 +5176,8 @@ function bestOfBothWorldsHD() {
   // the fire button: a small warm glow that rises and slowly dies away
   s += bobR(28, 36, 2, 1, '#c0201c')
   s += `<g opacity="0">${bobR(27, 36, 4, 1, '#ffb070') + bobR(28, 36, 2, 1, '#ffe2c4')}<ellipse cx="${29 * Q}" cy="${36.5 * Q}" rx="7" ry="3" fill="#ffd0a0" opacity="0.4"/>${bobRamp([[tPress, 0], [tPress + 0.45, 1], [tPressEnd, 1], [tPressEnd + 1.0, 0]])}</g>`
-  s += shown(pr.svg(), press, T)
+  s += shown(prTop.svg(), [[tPress - 0.07, tPressEnd + 0.12]], T) + prSlide
+  void press
 
   // ---- Riker before the screen: stares at Locutus, turns to Worf, raises a claw, turns back
   const rx = 54
@@ -4769,16 +5206,14 @@ function bestOfBothWorldsHD() {
     return p.svg()
   }
   const raise: [number, number][] = [[tUp, tLower]]
-  s += crabHD(BOB_RIKER, rx, ry, 'right', T, { left: [], right: raise }, [], 3.7, rikerDetails)
-  s += shown(eyesAt([5, 6, 11, 12]), [[tTurn, tAtWorf], [tBackTurn, tAtScreen]], T)
-  s += shown(eyesAt([4, 5, 10, 11]), [[tAtWorf, tBackTurn]], T)
-  // the claw halfway up (on the way up, and on the way down)
-  const sk = BOB_RIKER
-  const half = new Pix()
-  half.rect(rx + 18, ry + 4, 3, 2, sk.skin).rect(rx + 20, ry + 1, 2, 3, sk.skin).rect(rx + 21, ry + 1, 1, 3, sk.shade)
-  half.rect(rx + 19, ry - 2, 1, 3, sk.skin).rect(rx + 22, ry - 2, 1, 3, sk.skin).rect(rx + 19, ry, 4, 1, sk.skin)
-  half.set(rx + 19, ry - 2, sk.light).set(rx + 22, ry - 2, sk.light)
-  s += shown(half.svg(), [[tHalf, tUp], [tLower, tDown]], T)
+  s += crabHD(BOB_RIKER, rx, ry, 'right', T, { left: [], right: [] }, [], T / 5, rikerDetails)
+  // while he turns: the eyes are lifted off the face and glide 2 px to Worf and back
+  const glide = new Pix()
+  for (const c of [6, 7, 12, 13]) glide.rect(rx + c, ry + 2, 1, 3, EYE_HD)
+  const eyesMove = `<g>${eyesAt([])}<g>${glide.svg()}${bobTween('translate', [[tTurn, '0 0'], [tAtWorf, `${-2 * Q} 0`], [tBackTurn, `${-2 * Q} 0`], [tAtScreen, '0 0']])}</g></g>`
+  s += shown(eyesMove, [[tTurn, tAtScreen]], T)
+  s += bobArmRise('bobRikerArm', BOB_RIKER, rx, ry, [[tHalf, 12], [tUp + 0.1, 0, '0.25 0.6 0.4 1'], [tLower, 0], [tDown, 12]])
+  void raise
 
   return s
 }

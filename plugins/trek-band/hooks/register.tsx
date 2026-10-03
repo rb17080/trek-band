@@ -10099,10 +10099,23 @@ async function tickCacheStatus($: Host) {
 
 // Favourite scenes (by name, kept across sessions); when there are any, only they rotate
 let favs: string[] = []
+// Random order, like a shuffled deck: every scene shows once before any repeats, and the
+// next deal never starts with the scene that just played
+let deck: number[] = []
 function nextScene(n: number) {
-  const pool = SCENES.map((_, i) => i).filter(i => favs.length === 0 || favs.includes(SCENE_NAMES[i]))
-  if (pool.length === 0) return (n + 1) % SCENES.length
-  return pool.find(i => i > n % SCENES.length) ?? pool[0]
+  let pool = SCENES.map((_, i) => i).filter(i => favs.length === 0 || favs.includes(SCENE_NAMES[i]))
+  if (pool.length === 0) pool = SCENES.map((_, i) => i)
+  if (pool.length === 1) return pool[0]
+  deck = deck.filter(i => pool.includes(i))
+  if (deck.length === 0) {
+    deck = [...pool]
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[deck[i], deck[j]] = [deck[j], deck[i]]
+    }
+    if (deck[0] === n % SCENES.length) deck.push(deck.shift()!)
+  }
+  return deck.shift()!
 }
 
 const norm = (t: string) => t.toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '')
@@ -10159,6 +10172,7 @@ export const register: Register = on => {
     favs = ((await $.store.get('favs')) as string[] | undefined) ?? []
     // there is no pause button any more, so a pause left in the session must not freeze the scenes
     await update($, isPaused, () => false)
+    await update($, scene, n => nextScene(n))
     const usage = await $.session.usage()
     await update($, limits, () => usage.rateLimits.map(toLimit))
     await update($, ctx, () => ({ tokens: usage.context.tokens ?? 0, window: usage.context.window }))
